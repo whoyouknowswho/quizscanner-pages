@@ -53,6 +53,7 @@ const QuizData = (() => {
   const mimeType = 'application/octet-stream';
   const invalidBackup = () => new Error('File sao lưu QuizScanner bị hỏng hoặc có định dạng không được hỗ trợ.');
   const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const isExamPending = set => set?.randomExam === true && set.examSubmitted !== true;
   const safeId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(value)
     && !Object.hasOwn(Object.prototype, value) && value !== 'prototype';
 
@@ -71,12 +72,13 @@ const QuizData = (() => {
     const validSets = Object.entries(data.sets).every(([id, set]) => safeId(id)
       && isObject(set) && set.id === id && typeof set.name === 'string'
       && (set.restoredFrom == null || safeId(set.restoredFrom))
+      && (set.examSubmitted === undefined || typeof set.examSubmitted === 'boolean')
       && validQuestions(set.questions)
       && (set.allQuestionsBackup == null || validQuestions(set.allQuestionsBackup))
       && Number.isSafeInteger(set.currentIndex) && set.currentIndex >= 0
       && isObject(set.userAnswers) && Object.values(set.userAnswers).every(answer =>
         isObject(answer) && typeof answer.selected === 'string' && /^[A-J]$/.test(answer.selected)
-        && typeof answer.isCorrect === 'boolean'));
+        && (typeof answer.isCorrect === 'boolean' || (isExamPending(set) && answer.isCorrect === undefined))));
     const fileIds = new Set();
     const validFiles = data.uploadedFiles.every(file => {
       if (!isObject(file) || !safeId(file.id) || fileIds.has(file.id)
@@ -207,6 +209,7 @@ const QuizData = (() => {
     ['unclassified', 'Chưa phân loại']
   ]);
   const topicCache = new WeakMap();
+  const foldVietnamese = text => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/đ/g, 'd');
 
   function questionTopics(question) {
     const { prompt, code, blocks } = question;
@@ -215,7 +218,7 @@ const QuizData = (() => {
 
     const parts = Array.isArray(blocks) ? blocks : [];
     const text = [prompt, ...parts.filter(part => part?.type === 'text').map(part => part.content)].filter(Boolean).join('\n');
-    const wording = text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/đ/g, 'd');
+    const wording = foldVietnamese(text);
     const codeText = [code, ...parts.filter(part => part?.type === 'code').map(part => part.content)].filter(Boolean).join('\n');
     const source = (codeText || text).replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
     const className = source.match(/\b(?:class|struct)\s+(\w+)(?:\s+final)?\s*[:{]/)?.[1];
@@ -271,12 +274,16 @@ const QuizData = (() => {
     return items;
   }
 
+  const optionLetters = 'ABCDEFGHIJ';
+  const positionalOption = /\b(?:(?:all|none|both|any) (?:of )?(?:the )?(?:above|below)|(?:tat ca|khong co|ca hai)(?: .{0,35})? (?:tren|duoi)|(?:dap an|phuong an|lua chon) [a-j]\b|[a-j]\s*(?:va|hoac|and|or|&)\s*[a-j])\b/;
   const randomExamSize = 50;
   function createRandomExam(questions, setId, random = Math.random) {
     return shuffleInPlace(questions.slice(), random).slice(0, randomExamSize).map((source, index) => {
       const { chat, ...content } = source;
       const question = structuredClone(content);
       question.id = setId + '-q' + (index + 1);
+      // Keep source answer letters intact for OCR and grade the displayed choices by their source key.
+      question.examOptionOrder = shuffleInPlace([...optionLetters], random);
       // OCR can update the transcription of an exam question without splitting the draw.
       question.needsGrouping = false;
       question.multiQuestionSplitDone = true;
@@ -284,9 +291,28 @@ const QuizData = (() => {
     });
   }
 
+  function questionChoices(question) {
+    const options = question.options || {};
+    const keys = Object.keys(options);
+    if (!Array.isArray(question.examOptionOrder)
+      || keys.some(key => positionalOption.test(foldVietnamese(String(options[key]))))) {
+      return keys.map(key => ({ key, label: key, text: options[key] }));
+    }
+    const ordered = [...new Set([...question.examOptionOrder, ...keys])].filter(key => Object.hasOwn(options, key));
+    return ordered.map((key, index) => ({ key, label: optionLetters[index], text: options[key] }));
+  }
+
+  function gradeExam(questions, answers) {
+    for (const question of questions) {
+      const answer = answers[question.id];
+      if (answer) answer.isCorrect = answer.selected === question.correctLetter;
+    }
+  }
+
   return {
     mimeType, createBackup, readBackup, inspectBackup, mergeBackups, createQuizStore,
-    topicLabels, questionTopics, buildQuestionBank, randomExamSize, createRandomExam, shuffleInPlace
+    topicLabels, questionTopics, buildQuestionBank, randomExamSize, createRandomExam, shuffleInPlace,
+    questionChoices, isExamPending, gradeExam
   };
 })();
 

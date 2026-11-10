@@ -114,6 +114,9 @@ async function readQuizData() {
       if (Object.hasOwn(sets, id)) {
         sets[id].userAnswers = progress.userAnswers || {};
         sets[id].currentIndex = progress.currentIndex || 0;
+        if (sets[id].randomExam && typeof progress.examSubmitted === 'boolean') {
+          sets[id].examSubmitted = progress.examSubmitted;
+        }
       }
     }
     if (Object.hasOwn(sets, latestProgress.activeSetId)) activeSetId = latestProgress.activeSetId;
