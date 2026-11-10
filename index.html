@@ -750,8 +750,13 @@
 
       <div class="space-y-3 text-xs sm:text-sm">
         <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 space-y-1.5 text-slate-600 dark:text-slate-300 leading-relaxed">
-          <p>Chọn nhà cung cấp, nhập API key rồi chọn model. Model hỗ trợ ảnh có thể đọc ảnh đề. Model chỉ hỗ trợ văn bản vẫn dùng để chat và giải thích, còn Tesseract đọc ảnh.</p>
-          <p class="text-slate-400">Trình duyệt lưu API key trên thiết bị này và gửi trực tiếp đến nhà cung cấp đã chọn.</p>
+          <p>Chọn nhà cung cấp, đăng nhập (OpenRouter) hoặc nhập API key rồi chọn model. Có thể kết nối nhiều nhà cung cấp: model nào không dùng được thì web tự đổi model, cả tài khoản đều không dùng được thì chuyển sang tài khoản tiếp theo.</p>
+          <p class="text-slate-400">Trình duyệt lưu key trên thiết bị này và gửi trực tiếp đến nhà cung cấp. OpenAI và Claude không cho đăng nhập từ web khác nên cần API key.</p>
+        </div>
+
+        <div id="aiAccountsBox" class="hidden space-y-1.5">
+          <div class="font-bold text-slate-400">Tài khoản đã kết nối <span class="font-normal">(dùng theo thứ tự từ trên xuống)</span></div>
+          <ul id="aiAccountsList" class="space-y-1.5"></ul>
         </div>
 
         <div>
@@ -763,6 +768,12 @@
           <input id="aiBaseUrlInput" type="url" autocomplete="off" placeholder="https://api.example.com/v1" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
           <p class="mt-1 text-[11px] text-slate-400">API cần hỗ trợ OpenAI Chat Completions và cho phép gọi từ trình duyệt (CORS).</p>
         </div>
+        <div id="aiLoginRow" class="hidden space-y-1.5">
+          <button type="button" id="aiLoginBtn" class="w-full px-3 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white font-bold flex items-center justify-center gap-1.5 transition">
+            <i class="ph-bold ph-sign-in"></i> <span id="aiLoginLabel">Đăng nhập OpenRouter</span>
+          </button>
+          <p id="aiLoginHint" class="text-[11px] text-slate-400">Đăng nhập để dùng credit của tài khoản OpenRouter (có cả model miễn phí). Hoặc dán API key bên dưới.</p>
+        </div>
         <div>
           <label for="aiApiKeyInput" class="font-bold block mb-1 text-slate-400">API key</label>
           <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="Để trống để dùng OCR" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
@@ -771,7 +782,7 @@
           <label for="aiModelList" class="font-bold block text-slate-400">Model</label>
           <select id="aiModelList" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"></select>
           <input id="aiModelInput" type="text" aria-label="Tên model nhập thủ công" autocomplete="off" spellcheck="false" placeholder="Hoặc nhập mã model thủ công" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
-          <p id="aiOpenAiFallbackHint" class="hidden text-[11px] text-slate-400">OpenAI ưu tiên model bạn chọn và thử model khác nếu model đó không khả dụng.</p>
+          <p id="aiOpenAiFallbackHint" class="hidden text-[11px] text-slate-400">Web ưu tiên model bạn chọn và tự thử model khác nếu model đó không khả dụng.</p>
         </div>
         <div class="flex items-center gap-2 flex-wrap">
           <button type="button" id="aiLoadModelsBtn" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-60">
@@ -830,7 +841,7 @@
     </div>
   </dialog>
 
-  <script src="quiz-ai.js?v=2"></script>
+  <script src="quiz-ai.js?v=3"></script>
   <script src="quiz-cpp.js?v=2"></script>
   <script>
     // =========================================================================
@@ -2794,29 +2805,38 @@
       aiFails: new Map()       // questionId -> số lần AI lỗi tạm thời
     };
     let aiConnectionVersion = 0;
-    let openAiSession = null;
+    const aiSessions = new Map();  // provider → phiên tự đổi model (OpenAI, OpenRouter)
+    let aiActiveProvider = '';     // tài khoản vừa trả lời thành công
 
-    function getAiSettings() {
-      let saved = {};
+    function readSavedAi() {
       try {
-        saved = JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}') || {};
+        return JSON.parse(localStorage.getItem(AI_SETTINGS_KEY) || '{}') || {};
       } catch (_) {
-        saved = {};
+        return {};
       }
-      return QuizAi.normalizeSettings(saved, BUILT_IN_GEMINI_API_KEY);
     }
 
-    function saveAiSettings(settings) {
+    // Tài khoản/API key được ưu tiên dùng trước
+    function getAiSettings() {
+      return QuizAi.normalizeSettings(readSavedAi(), BUILT_IN_GEMINI_API_KEY);
+    }
+
+    // Mọi tài khoản đã kết nối: tài khoản ưu tiên đứng đầu, các tài khoản khác dùng dự phòng
+    function getAiAccounts() {
+      return QuizAi.normalizeAccounts(readSavedAi(), BUILT_IN_GEMINI_API_KEY);
+    }
+
+    function getAiAccount(provider) {
+      const preferred = getAiSettings();
+      if (preferred.provider === provider) return preferred;
+      return getAiAccounts().find(a => a.provider === provider) || QuizAi.normalizeSettings({ provider }, '');
+    }
+
+    // preferred: tài khoản ưu tiên; accounts: toàn bộ tài khoản sẽ lưu (thiếu preferred thì tự thêm)
+    function saveAiSettings(preferred, accounts = getAiAccounts()) {
+      const list = [preferred, ...accounts.filter(a => a.provider !== preferred.provider)];
       try {
-        localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify({
-          provider: settings.provider,
-          baseUrl: settings.baseUrl,
-          apiKey: settings.userKey,
-          model: settings.model,
-          vision: settings.vision,
-          autoOcr: settings.autoOcr,
-          autoExplain: settings.autoExplain
-        }));
+        localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(QuizAi.serializeAccounts(preferred, list, preferred)));
         return true;
       } catch (_) {
         showToast('Trình duyệt không cho lưu cài đặt (chế độ ẩn danh?).', 'ph-warning');
@@ -2833,7 +2853,7 @@
     }
 
     function assertAiConnection(settings) {
-      if (settings.version !== undefined && (settings.version !== aiConnectionVersion || !sameAiConnection(settings, getAiSettings()))) {
+      if (settings.version !== undefined && (settings.version !== aiConnectionVersion || !sameAiConnection(settings, getAiAccount(settings.provider)))) {
         throw new AiError('Cài đặt API đã thay đổi. Hãy thử lại.', 'changed');
       }
     }
@@ -2857,13 +2877,15 @@
       const info = document.getElementById('scanEngineInfo');
       if (info) {
         if (usingAi) {
-          let model = settings.model;
-          if (settings.provider === 'gemini') model = geminiState.active || model;
-          if (settings.provider === 'openai' && openAiSession && sameAiConnection(settings, openAiSession.settings)) {
-            model = openAiSession.active || model;
-          }
-          if (QuizAi.providers[settings.provider].autoModel && isAutoModel(model)) model = 'tự chọn model';
-          const name = escapeHtml(QuizAi.providers[settings.provider].label + ' · ' + model);
+          const accounts = getAiAccounts();
+          const current = accounts.find(a => a.provider === aiActiveProvider) || settings;
+          let model = current.model;
+          if (current.provider === 'gemini') model = geminiState.active || model;
+          const session = aiSessions.get(current.provider);
+          if (session && sameAiConnection(current, session.settings)) model = session.active || model;
+          if (QuizAi.providers[current.provider].autoModel && isAutoModel(model)) model = 'tự chọn model';
+          const backups = accounts.length > 1 ? ` (+${accounts.length - 1} tài khoản dự phòng)` : '';
+          const name = escapeHtml(QuizAi.providers[current.provider].label + ' · ' + model + backups);
           const mode = aiCanReadImages(settings)
             ? 'AI đọc ảnh câu hỏi, chat và giải thích.'
             : 'AI chat và giải thích. Tesseract đọc ảnh câu hỏi.';
@@ -4220,43 +4242,65 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       throw new AiError('Không tìm được model AI dùng được', 'all');
     }
 
+    // Gọi AI bằng một tài khoản; OpenAI/OpenRouter tự đổi model trong cùng tài khoản khi model lỗi
+    async function requestAiFrom(payload, settings) {
+      if (settings.provider === 'gemini') return geminiRequest(payload, settings);
+      if (settings.provider !== 'openai' && settings.provider !== 'openrouter') return QuizAi.generate(settings, payload);
+      let session = aiSessions.get(settings.provider);
+      if (!session || session.settings.version !== settings.version || !sameAiConnection(session.settings, settings)) {
+        session = {
+          settings,
+          active: '',
+          run: QuizAi.createModelFallback(settings, { assertCurrent: () => assertAiConnection(settings) })
+        };
+        aiSessions.set(settings.provider, session);
+      }
+      const result = await session.run(payload);
+      assertAiConnection(settings);
+      if (session.active !== result.__model) {
+        session.active = result.__model;
+        updateAiModeLabel();
+      }
+      return result;
+    }
+
+    // Thử tài khoản ưu tiên trước; mọi model của tài khoản đó đều không dùng được thì chuyển sang tài khoản tiếp theo
     async function requestAi(payload, settings) {
       assertAiConnection(settings);
-      try {
-        let result;
-        if (settings.provider === 'gemini') {
-          result = await geminiRequest(payload, settings);
-        } else if (settings.provider === 'openai') {
-          if (!openAiSession || openAiSession.settings.version !== settings.version || !sameAiConnection(openAiSession.settings, settings)) {
-            openAiSession = {
-              settings,
-              active: '',
-              run: QuizAi.createOpenAiFallback(settings, { assertCurrent: () => assertAiConnection(settings) })
-            };
-          }
-          const session = openAiSession;
-          result = await session.run(payload);
-          assertAiConnection(settings);
-          if (session.active !== result.__model) {
-            session.active = result.__model;
+      const accounts = [settings, ...getAiAccounts()
+        .filter(a => a.provider !== settings.provider && a.model)
+        .map(a => ({ ...a, version: settings.version }))];
+      const retryTimes = [];
+      for (const [index, account] of accounts.entries()) {
+        try {
+          const result = await requestAiFrom(payload, account);
+          assertAiConnection(account);
+          result.__provider = account.provider;
+          if (aiActiveProvider !== account.provider) {
+            const switched = aiActiveProvider !== '' || index > 0;
+            aiActiveProvider = account.provider;
+            if (switched) showToast(`AI: đang dùng ${QuizAi.providers[account.provider].label} · ${result.__model || account.model}`, 'ph-swap');
             updateAiModeLabel();
           }
-        } else {
-          result = await QuizAi.generate(settings, payload);
+          return result;
+        } catch (err) {
+          assertAiConnection(account);
+          if (Number.isFinite(err.retryAt)) retryTimes.push(err.retryAt);
+          // Yêu cầu quá lớn: để bên gọi chia nhỏ lô; tài khoản cuối cùng cũng lỗi: báo lỗi, chờ tới lúc sớm nhất có thể thử lại
+          if (index === accounts.length - 1 || err.kind === 'request' || err.kind === 'changed') {
+            if (err.kind === 'vision' && (!['openai', 'openrouter'].includes(account.provider) || err.retryAt === Infinity)) {
+              extraction.aiNoVision = true;
+              updateAiModeLabel();
+            }
+            const error = err instanceof AiError ? err : new AiError(err.message, err.kind || 'other');
+            if (retryTimes.length) error.retryAt = Math.min(...retryTimes);
+            else if (err.retryAt !== undefined) error.retryAt = err.retryAt;
+            throw error;
+          }
+          showToast(`AI: ${QuizAi.providers[account.provider].label} chưa dùng được (${String(err.message).slice(0, 80)}) → thử tài khoản khác`, 'ph-warning');
         }
-        assertAiConnection(settings);
-        return result;
-      } catch (err) {
-        assertAiConnection(settings);
-        if (err.kind === 'vision' && (settings.provider !== 'openai' || err.retryAt === Infinity)) {
-          extraction.aiNoVision = true;
-          updateAiModeLabel();
-        }
-        if (err instanceof AiError) throw err;
-        const error = new AiError(err.message, err.kind || 'other');
-        error.retryAt = err.retryAt;
-        throw error;
       }
+      throw new AiError('Chưa có tài khoản AI nào dùng được', 'all');
     }
 
     function applyAiResult(q, r) {
@@ -5174,9 +5218,11 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       document.getElementById('aiBaseUrlInput').value = s.baseUrl;
       document.getElementById('aiApiKeyInput').value = s.userKey;
       document.getElementById('aiModelInput').value = s.model;
+      aiFormLoginKey = s.login ? s.userKey : '';
       document.getElementById('aiAutoOcrCheckbox').checked = s.autoOcr;
       document.getElementById('aiAutoExplainCheckbox').checked = s.autoExplain;
       resetAiModelForm();
+      renderAiAccounts();
       if (s.apiKey && extraction.aiDisabledReason) {
         showAiTestResult(false, `<i class="ph-bold ph-warning-circle"></i> AI đang tạm tắt: ${escapeHtml(extraction.aiDisabledReason)}`);
       }
@@ -5632,6 +5678,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     const aiTestBtn = document.getElementById('aiTestBtn');
     let aiFormRevision = 0;
     let aiModelChoices = new Map();
+    let aiFormLoginKey = '';  // key OpenRouter cấp khi đăng nhập (khác key dán tay)
 
     for (const [id, { label }] of Object.entries(QuizAi.providers)) aiProviderInput.add(new Option(label, id));
 
@@ -5652,7 +5699,11 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       aiFormRevision++;
       document.getElementById('aiTestResult').className = 'hidden';
       document.getElementById('aiBaseUrlField').classList.toggle('hidden', aiProviderInput.value !== 'custom');
-      document.getElementById('aiOpenAiFallbackHint').classList.toggle('hidden', aiProviderInput.value !== 'openai');
+      document.getElementById('aiOpenAiFallbackHint').classList.toggle('hidden', !QuizAi.providers[aiProviderInput.value].autoModel);
+      const login = QuizAi.providers[aiProviderInput.value].login;
+      const signedIn = login && aiFormLoginKey && aiKeyInput.value.trim() === aiFormLoginKey;
+      document.getElementById('aiLoginRow').classList.toggle('hidden', !login);
+      document.getElementById('aiLoginLabel').textContent = signedIn ? 'Đã đăng nhập OpenRouter · Đăng nhập lại' : 'Đăng nhập OpenRouter';
       const builtIn = aiProviderInput.value === 'gemini' && BUILT_IN_GEMINI_API_KEY.trim();
       aiKeyInput.placeholder = builtIn ? 'Đang dùng key cài sẵn' : 'Để trống để dùng OCR';
       fillAiModelChoices([]);
@@ -5664,27 +5715,28 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         baseUrl: aiBaseUrlInput.value,
         apiKey: aiKeyInput.value,
         model: aiModelInput.value,
+        login: Boolean(aiFormLoginKey) && aiKeyInput.value.trim() === aiFormLoginKey,
         autoOcr: document.getElementById('aiAutoOcrCheckbox').checked,
         autoExplain: document.getElementById('aiAutoExplainCheckbox').checked
       }, BUILT_IN_GEMINI_API_KEY);
       if (settings.provider === 'custom' && settings.apiKey) settings.baseUrl = QuizAi.customBaseUrl(settings.baseUrl);
-      const saved = getAiSettings();
+      const saved = getAiAccount(settings.provider);
       settings.vision = aiModelChoices.get(settings.model)?.vision ?? (sameAiConnection(settings, saved) ? saved.vision : null);
       return settings;
     }
 
     aiProviderInput.addEventListener('change', () => {
-      const saved = getAiSettings();
-      const sameProvider = saved.provider === aiProviderInput.value;
-      aiKeyInput.value = sameProvider ? saved.userKey : '';
-      aiBaseUrlInput.value = sameProvider ? saved.baseUrl : '';
-      aiModelInput.value = sameProvider ? saved.model : (QuizAi.providers[aiProviderInput.value].autoModel ? 'auto' : '');
+      const saved = getAiAccount(aiProviderInput.value);
+      aiKeyInput.value = saved.userKey;
+      aiBaseUrlInput.value = saved.baseUrl;
+      aiModelInput.value = saved.userKey ? saved.model : (QuizAi.providers[aiProviderInput.value].autoModel ? 'auto' : '');
+      aiFormLoginKey = saved.login ? saved.userKey : '';
       resetAiModelForm();
     });
     aiKeyInput.addEventListener('input', resetAiModelForm);
     aiBaseUrlInput.addEventListener('input', () => {
-      const saved = getAiSettings();
-      if (saved.provider === 'custom' && aiBaseUrlInput.value.trim() !== saved.baseUrl && aiKeyInput.value === saved.userKey) {
+      const saved = getAiAccount('custom');
+      if (saved.userKey && aiBaseUrlInput.value.trim() !== saved.baseUrl && aiKeyInput.value === saved.userKey) {
         aiKeyInput.value = '';
       }
       resetAiModelForm();
@@ -5755,8 +5807,8 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         }
         model = found;
         lastGeminiTest = { apiKey: settings.apiKey, model: settings.model, verified: found, failed };
-      } else if (settings.provider === 'openai') {
-        const result = await QuizAi.createOpenAiFallback(settings)(payload);
+      } else if (settings.provider === 'openai' || settings.provider === 'openrouter') {
+        const result = await QuizAi.createModelFallback(settings)(payload);
         model = result.__model;
       } else {
         await QuizAi.generate(settings, payload);
@@ -5764,23 +5816,25 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       return () => showAiTestResult(true, `Kết nối thành công với <code class="font-mono">${escapeHtml(model)}</code>. Bấm <strong>Lưu cài đặt</strong> để dùng.`);
     }));
 
-    document.getElementById('saveAiSettingsBtn').addEventListener('click', () => {
-      const prev = getAiSettings();
-      let next;
-      try {
-        next = readAiSettingsForm();
-        if (next.apiKey && !next.model) throw new Error('Hãy chọn hoặc nhập tên model.');
-      } catch (err) {
-        showAiTestResult(false, escapeHtml(err.message));
-        return;
-      }
-      if (!saveAiSettings(next)) return;
-      closeAiSettingsModal();
+    // Lưu danh sách tài khoản; tài khoản preferred dùng trước. Thiếu key thì tài khoản đó bị gỡ.
+    function storeAiAccounts(preferred, others) {
+      const prevList = JSON.stringify(getAiAccounts());
+      const prevVision = getAiSettings().vision;
+      const accounts = others.filter(a => a.userKey && a.provider !== preferred.provider);
+      let first = preferred;
+      if (!preferred.apiKey && accounts.length) first = { ...accounts.shift(), autoOcr: preferred.autoOcr, autoExplain: preferred.autoExplain };
+      if (!saveAiSettings(first, accounts)) return false;
+      resetAiRuntime(prevList !== JSON.stringify(getAiAccounts()) || prevVision !== getAiSettings().vision);
+      return true;
+    }
+
+    // Đổi key/model/tài khoản → bật lại AI và cho phép thử lại các câu bị lỗi trước đó
+    function resetAiRuntime(changed) {
       const now = getAiSettings();
-      // Đổi key/model → bật lại AI và cho phép thử lại các câu bị lỗi trước đó
-      if (!sameAiConnection(now, prev) || now.vision !== prev.vision || extraction.aiDisabledReason || extraction.aiPausedUntil) {
+      if (changed || extraction.aiDisabledReason || extraction.aiPausedUntil) {
         aiConnectionVersion++;
-        openAiSession = null;
+        aiSessions.clear();
+        aiActiveProvider = '';
         extraction.aiDisabledReason = '';
         extraction.aiNoVision = false;
         extraction.failed.clear();
@@ -5793,19 +5847,142 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         geminiState.probing = null;
         geminiState.noThinkingConfig = false;
         // Giữ danh sách model vừa tải khi bấm Kiểm tra với chính key này
-        if (geminiState.listKey !== now.apiKey) geminiState.models = null;
+        if (geminiState.listKey !== getAiAccount('gemini').apiKey) geminiState.models = null;
       }
       // Vừa kiểm tra thành công đúng key/model này → dùng luôn kết quả, lần gọi AI đầu tiên không phải thử lại
       const tested = lastGeminiTest;
-      if (now.provider === 'gemini' && tested && tested.apiKey === now.apiKey && tested.model === now.model) {
+      const gemini = getAiAccount('gemini');
+      if (tested && tested.apiKey === gemini.apiKey && tested.model === gemini.model) {
         for (const [m, err] of tested.failed) blockModel(m, err);
         geminiState.verified.add(tested.verified);
         geminiState.active = tested.verified;
       }
       lastGeminiTest = null;
       updateAiModeLabel();
-      showToast(now.apiKey ? 'Đã lưu model ' + now.model + '.' : 'Đã lưu: dùng OCR để đọc ảnh.', 'ph-check-circle');
       renderQuizQuestion();
+      return now;
+    }
+
+    function aiAccountLabel(account) {
+      const model = QuizAi.providers[account.provider].autoModel && isAutoModel(account.model) ? 'tự chọn model' : account.model;
+      return QuizAi.providers[account.provider].label + ' · ' + model;
+    }
+
+    function renderAiAccounts() {
+      const accounts = getAiAccounts();
+      document.getElementById('aiAccountsBox').classList.toggle('hidden', accounts.length === 0);
+      document.getElementById('aiAccountsList').innerHTML = accounts.map((a, i) => `
+        <li class="flex items-center gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60">
+          <span class="shrink-0 w-5 h-5 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-400 text-[11px] font-extrabold flex items-center justify-center">${i + 1}</span>
+          <span class="min-w-0 flex-1">
+            <span class="font-bold block truncate">${escapeHtml(aiAccountLabel(a))}</span>
+            <span class="text-[11px] text-slate-400">${a.login ? 'Đã đăng nhập tài khoản' : 'API key'}${i === 0 ? ' · dùng trước' : ' · dự phòng'}</span>
+          </span>
+          ${i === 0 ? '' : `<button type="button" data-ai-prefer="${a.provider}" class="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-500/10">Dùng trước</button>`}
+          <button type="button" data-ai-edit="${a.provider}" class="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold hover:bg-slate-200 dark:hover:bg-slate-800">Sửa</button>
+          <button type="button" data-ai-remove="${a.provider}" class="shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold text-rose-500 hover:bg-rose-500/10">${a.login ? 'Đăng xuất' : 'Gỡ'}</button>
+        </li>`).join('');
+    }
+
+    function aiFormFlags() {
+      return {
+        autoOcr: document.getElementById('aiAutoOcrCheckbox').checked,
+        autoExplain: document.getElementById('aiAutoExplainCheckbox').checked
+      };
+    }
+
+    document.getElementById('aiAccountsList').addEventListener('click', e => {
+      const button = e.target.closest('button');
+      if (!button) return;
+      const accounts = getAiAccounts();
+      const { aiPrefer, aiEdit, aiRemove } = button.dataset;
+      if (aiEdit) {
+        aiProviderInput.value = aiEdit;
+        aiProviderInput.dispatchEvent(new Event('change'));
+        aiKeyInput.focus();
+        return;
+      }
+      const target = accounts.find(a => a.provider === (aiPrefer || aiRemove));
+      if (!target) return;
+      const flags = aiFormFlags();
+      if (aiPrefer) {
+        storeAiAccounts({ ...target, ...flags }, accounts);
+        showToast('Dùng ' + QuizAi.providers[target.provider].label + ' trước.', 'ph-check-circle');
+      } else {
+        const rest = accounts.filter(a => a !== target);
+        const first = rest[0] ? { ...rest[0], ...flags } : QuizAi.normalizeSettings({ provider: target.provider, ...flags }, '');
+        storeAiAccounts(first, rest);
+        if (aiProviderInput.value === target.provider) aiProviderInput.dispatchEvent(new Event('change'));
+        showToast((target.login ? 'Đã đăng xuất ' : 'Đã gỡ ') + QuizAi.providers[target.provider].label + ' khỏi web.', 'ph-check-circle');
+      }
+      renderAiAccounts();
+    });
+
+    // ----- Đăng nhập OpenRouter (OAuth PKCE): OpenRouter cấp key gắn với tài khoản, trừ vào credit của tài khoản đó -----
+    const OPENROUTER_LOGIN_KEY = 'QuizScannerPro_OpenRouterLogin_v1';
+
+    document.getElementById('aiLoginBtn').addEventListener('click', async () => {
+      if (!/^https?:$/.test(location.protocol)) {
+        showAiTestResult(false, 'Đăng nhập chỉ chạy khi mở web qua địa chỉ http(s), ví dụ GitHub Pages hoặc localhost. Khi mở file HTML trực tiếp, hãy dán API key.');
+        return;
+      }
+      const button = document.getElementById('aiLoginBtn');
+      button.disabled = true;
+      try {
+        const { verifier, challenge } = await QuizAi.createPkce();
+        const callback = location.origin + location.pathname;
+        localStorage.setItem(OPENROUTER_LOGIN_KEY, JSON.stringify({ verifier, at: Date.now(), model: aiModelInput.value.trim() || 'auto', ...aiFormFlags() }));
+        showAiTestResult(true, '<i class="ph-bold ph-spinner animate-spin"></i> Đang chuyển sang trang đăng nhập OpenRouter…');
+        location.assign(QuizAi.openRouterAuthUrl(callback, challenge));
+      } catch (_) {
+        button.disabled = false;
+        showAiTestResult(false, 'Trình duyệt không cho bắt đầu đăng nhập (chế độ ẩn danh chặn lưu dữ liệu?). Hãy dán API key.');
+      }
+    });
+
+    // Quay lại từ OpenRouter với ?code=… → đổi lấy key và lưu thành tài khoản dùng trước
+    async function finishOpenRouterLogin() {
+      const params = new URLSearchParams(location.search);
+      const code = params.get('code');
+      let pending = null;
+      try { pending = JSON.parse(localStorage.getItem(OPENROUTER_LOGIN_KEY) || 'null'); } catch (_) { pending = null; }
+      if (!code || !pending) return;
+      localStorage.removeItem(OPENROUTER_LOGIN_KEY);
+      params.delete('code');
+      history.replaceState(null, '', location.pathname + (params.size ? '?' + params : '') + location.hash);
+      if (Date.now() - pending.at > 30 * 60_000) {
+        showToast('Phiên đăng nhập OpenRouter đã hết hạn. Hãy đăng nhập lại.', 'ph-warning');
+        return;
+      }
+      showToast('Đang hoàn tất đăng nhập OpenRouter…', 'ph-spinner');
+      try {
+        const key = await QuizAi.exchangeOpenRouterCode(code, pending.verifier);
+        const account = QuizAi.normalizeSettings({
+          provider: 'openrouter', apiKey: key, model: pending.model, login: true,
+          autoOcr: pending.autoOcr, autoExplain: pending.autoExplain
+        }, '');
+        storeAiAccounts(account, getAiAccounts());
+        showToast('Đã đăng nhập OpenRouter. AI dùng credit của tài khoản này trước.', 'ph-check-circle');
+        openAiSettingsModal();
+      } catch (err) {
+        showToast(err.message, 'ph-warning');
+      }
+    }
+
+    document.getElementById('saveAiSettingsBtn').addEventListener('click', () => {
+      let next;
+      try {
+        next = readAiSettingsForm();
+        if (next.apiKey && !next.model) throw new Error('Hãy chọn hoặc nhập tên model.');
+      } catch (err) {
+        showAiTestResult(false, escapeHtml(err.message));
+        return;
+      }
+      if (!storeAiAccounts(next, getAiAccounts())) return;
+      closeAiSettingsModal();
+      const now = getAiSettings();
+      const count = getAiAccounts().length;
+      showToast(now.apiKey ? 'Đã lưu ' + aiAccountLabel(now) + (count > 1 ? ' (+' + (count - 1) + ' dự phòng).' : '.') : 'Đã lưu: dùng OCR để đọc ảnh.', 'ph-check-circle');
     });
 
     // Dùng AI đọc lại các câu trước đó chỉ đọc được bằng OCR (chữ chính xác hơn)
@@ -6836,6 +7013,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       showQuizDataReady();
       if (location.hash === '#du-lieu') openQuizDataPanel();
       else renderQuizQuestion();
+      finishOpenRouterLogin();
     });
   </script>
   <script src="quiz-data.js?v=4"></script>

@@ -3,7 +3,7 @@ const QuizAi = (() => {
     gemini: { label: 'Google Gemini', autoModel: true },
     openai: { label: 'OpenAI', base: 'https://api.openai.com/v1', tokenField: 'max_completion_tokens', autoModel: true },
     anthropic: { label: 'Anthropic Claude', base: 'https://api.anthropic.com/v1' },
-    openrouter: { label: 'OpenRouter', base: 'https://openrouter.ai/api/v1' },
+    openrouter: { label: 'OpenRouter', base: 'https://openrouter.ai/api/v1', autoModel: true, login: true },
     groq: { label: 'Groq', base: 'https://api.groq.com/openai/v1', tokenField: 'max_completion_tokens' },
     deepseek: { label: 'DeepSeek', base: 'https://api.deepseek.com' },
     custom: { label: 'API khác (tương thích OpenAI)' }
@@ -23,9 +23,84 @@ const QuizAi = (() => {
       apiKey: userKey || geminiKey,
       model: autoModel && (!model || /^auto$/i.test(model)) ? 'auto' : model,
       vision: typeof saved.vision === 'boolean' ? saved.vision : null,
+      login: Boolean(userKey && saved.login === true),
       autoOcr: saved.autoOcr !== false,
       autoExplain: saved.autoExplain !== false
     };
+  }
+
+  // Every connected account, the preferred provider first, then the others in provider order.
+  function normalizeAccounts(saved = {}, builtInKey = '') {
+    const preferred = normalizeSettings(saved, builtInKey);
+    const list = preferred.apiKey ? [preferred] : [];
+    const accounts = saved.accounts && typeof saved.accounts === 'object' ? saved.accounts : {};
+    for (const id of Object.keys(providers)) {
+      if (id === preferred.provider || !Object.hasOwn(accounts, id)) continue;
+      const account = normalizeSettings({ ...accounts[id], provider: id, autoOcr: saved.autoOcr, autoExplain: saved.autoExplain }, builtInKey);
+      if (account.userKey) list.push(account);
+    }
+    return list;
+  }
+
+  function storedAccount(settings) {
+    return {
+      apiKey: settings.userKey,
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+      vision: settings.vision,
+      login: settings.login || undefined
+    };
+  }
+
+  // Builds the saved object: the preferred account at the top level plus every account by provider.
+  function serializeAccounts(preferred, accounts, flags = {}) {
+    const byProvider = {};
+    for (const account of accounts) {
+      if (account.userKey) byProvider[account.provider] = storedAccount(account);
+    }
+    return {
+      provider: preferred.provider,
+      ...storedAccount(preferred),
+      accounts: byProvider,
+      autoOcr: flags.autoOcr !== false,
+      autoExplain: flags.autoExplain !== false
+    };
+  }
+
+  // ----- OpenRouter sign-in (OAuth PKCE): the account issues a key billed to its own credits -----
+  const base64Url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  async function createPkce(cryptoImpl = globalThis.crypto) {
+    const verifier = base64Url(cryptoImpl.getRandomValues(new Uint8Array(32)));
+    const digest = await cryptoImpl.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+    return { verifier, challenge: base64Url(new Uint8Array(digest)) };
+  }
+
+  function openRouterAuthUrl(callbackUrl, challenge) {
+    return 'https://openrouter.ai/auth?' + new URLSearchParams({
+      callback_url: callbackUrl, code_challenge: challenge, code_challenge_method: 'S256'
+    });
+  }
+
+  async function exchangeOpenRouterCode(code, verifier, fetcher = fetch) {
+    let response;
+    try {
+      response = await fetcher('https://openrouter.ai/api/v1/auth/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, code_verifier: verifier, code_challenge_method: 'S256' }),
+        credentials: 'omit',
+        redirect: 'error',
+        signal: AbortSignal.timeout(20_000)
+      });
+    } catch {
+      throw new Error('Không kết nối được OpenRouter để hoàn tất đăng nhập. Kiểm tra mạng rồi đăng nhập lại.');
+    }
+    const data = await response.json().catch(() => null);
+    if (!response.ok || typeof data?.key !== 'string' || !data.key) {
+      throw new Error('OpenRouter không xác nhận đăng nhập' + (data?.error?.message ? ': ' + String(data.error.message).slice(0, 120) : '.') + ' Hãy đăng nhập lại.');
+    }
+    return data.key;
   }
 
   function customBaseUrl(value) {
@@ -40,6 +115,7 @@ const QuizAi = (() => {
   function errorFor(status, message, provider, imageRequest) {
     let kind = 'other';
     if (status === 401 || status === 403) kind = 'fatal';
+    else if (status === 402) kind = 'credits';
     else if (status === 429) kind = 'rate';
     else if (status >= 500) kind = 'overload';
     else if (status === 413 || /too (?:large|many)|payload size|image limit/i.test(message)) kind = 'request';
@@ -125,7 +201,13 @@ const QuizAi = (() => {
           : /(?:embed|whisper|moderation|dall-e|tts|transcri|sora|realtime|gpt-image|audio|orpheus|prompt-guard|deep-research)/i.test(model.id)) continue;
         const input = model.input_modalities || model.architecture?.input_modalities;
         const vision = model.capabilities?.image_input?.supported;
-        models.set(model.id, { id: model.id, vision: Array.isArray(input) ? input.includes('image') : (vision ?? null) });
+        const price = model.pricing;
+        const free = /:free$/.test(model.id) || (price ? Number(price.prompt) === 0 && Number(price.completion) === 0 : undefined);
+        models.set(model.id, {
+          id: model.id,
+          vision: Array.isArray(input) ? input.includes('image') : (vision ?? null),
+          ...(free === undefined ? {} : { free })
+        });
       }
       if (settings.provider !== 'anthropic' || !data.has_more || !data.last_id) break;
       path = '/models?after_id=' + encodeURIComponent(data.last_id);
@@ -229,11 +311,29 @@ const QuizAi = (() => {
     ).map(([, id]) => id);
   }
 
-  function createOpenAiFallback(settings, { fetcher = fetch, assertCurrent = () => {} } = {}) {
+  // OpenRouter: cheap, capable paid models first (billed to the signed-in account), then free models.
+  function rankedOpenRouterModels(models, needsImages, noCredits = false) {
+    const vendors = ['google', 'openai', 'anthropic', 'deepseek', 'qwen', 'meta-llama', 'mistralai', 'x-ai', 'moonshotai', 'z-ai'];
+    const cheap = /^(?:google\/gemini-[\d.]+-flash(?:-preview)?|openai\/gpt-[\d.]+o?-mini|anthropic\/claude-[\w.-]*haiku[\w.-]*|deepseek\/deepseek-(?:chat|v[\d.]+)[\w.-]*)$/;
+    const skip = /(?:embed|audio|image|tts|search|online|guard|-thinking|:extended|:beta|vision-preview)/;
+    const usable = models.filter(model => !skip.test(model.id) && !(needsImages && model.vision !== true)
+      && vendors.includes(model.id.split('/')[0]));
+    const order = (a, b) => vendors.indexOf(a.id.split('/')[0]) - vendors.indexOf(b.id.split('/')[0])
+      || b.id.localeCompare(a.id, 'en', { numeric: true });
+    const paid = noCredits ? [] : usable.filter(model => model.free === false && cheap.test(model.id)).sort(order);
+    const free = usable.filter(model => model.free === true).sort(order);
+    return [...paid.slice(0, 4), ...free].map(model => model.id);
+  }
+
+  // Tries the chosen model, then other models of the same account when one is unavailable.
+  function createModelFallback(settings, { fetcher = fetch, assertCurrent = () => {} } = {}) {
+    const openRouter = settings.provider === 'openrouter';
+    const label = providers[settings.provider].label;
     const blockedUntil = new Map();
     const textOnly = new Set();
     let catalog;
     let pauseUntil = 0;
+    let noCredits = false;
     const pausedError = message => Object.assign(new Error(message), { kind: 'all', retryAt: pauseUntil });
     function slowDown(err) {
       pauseUntil = Math.max(pauseUntil, Date.now() + 60_000, err.retryAt || 0);
@@ -253,7 +353,7 @@ const QuizAi = (() => {
 
       async function tryModel(model) {
         assertCurrent();
-        if (pauseUntil > Date.now()) throw pausedError('OpenAI đang yêu cầu giảm tần suất gửi.');
+        if (pauseUntil > Date.now()) throw pausedError(label + ' đang yêu cầu giảm tần suất gửi.');
         tried.add(model);
         try {
           const reply = await generate({ ...settings, model }, payload, guardedFetch);
@@ -264,6 +364,11 @@ const QuizAi = (() => {
           if (err.kind === 'slow_down') throw slowDown(err);
           if (err.kind === 'vision' && needsImages) textOnly.add(model);
           else if (err.kind === 'model') blockedUntil.set(model, Infinity);
+          else if (err.kind === 'credits' && openRouter) {
+            // Account has no credits left for paid models: keep going with free ones
+            noCredits = true;
+            blockedUntil.set(model, Date.now() + 10 * 60_000);
+          }
           else if (err.kind === 'rate' || err.kind === 'overload') {
             blockedUntil.set(model, Math.max(Date.now() + 60_000, err.retryAt || 0));
           } else throw err;
@@ -273,7 +378,7 @@ const QuizAi = (() => {
       }
 
       assertCurrent();
-      if (pauseUntil > Date.now()) throw pausedError('OpenAI đang yêu cầu giảm tần suất gửi.');
+      if (pauseUntil > Date.now()) throw pausedError(label + ' đang yêu cầu giảm tần suất gửi.');
       const preferred = settings.model && !/^auto$/i.test(settings.model) ? settings.model : '';
       if (preferred && needsImages && settings.vision === false) textOnly.add(preferred);
       if (preferred && available(preferred)) {
@@ -285,11 +390,13 @@ const QuizAi = (() => {
         catalog = null;
         throw err.kind === 'slow_down' ? slowDown(err) : err;
       });
-      const models = rankedOpenAiModels(await catalog, needsImages);
+      const list = await catalog;
+      const paid = new Set(list.filter(model => model.free === false).map(model => model.id));
+      const models = openRouter ? rankedOpenRouterModels(list, needsImages, noCredits) : rankedOpenAiModels(list, needsImages);
       assertCurrent();
       for (const model of models) {
-        if (tried.size >= 4) break;
-        if (!available(model)) continue;
+        if (tried.size >= (openRouter ? 6 : 4)) break;
+        if (!available(model) || (noCredits && paid.has(model))) continue;
         const reply = await tryModel(model);
         if (reply) return reply;
       }
@@ -297,14 +404,18 @@ const QuizAi = (() => {
       const reason = lastError ? ' ' + lastError.message : '';
       const recoverAt = [preferred, ...models].map(model => blockedUntil.get(model)).filter(Number.isFinite);
       if (models.some(available)) recoverAt.push(Date.now() + 1000);
-      const summary = needsImages ? 'Hiện chưa có model OpenAI phù hợp để đọc ảnh.' : 'Chưa tìm được model OpenAI dùng được.';
+      const summary = needsImages ? 'Hiện chưa có model ' + label + ' phù hợp để đọc ảnh.' : 'Chưa tìm được model ' + label + ' dùng được.';
       throw Object.assign(new Error(summary + reason), {
         kind: needsImages ? 'vision' : 'all', retryAt: Math.min(...recoverAt)
       });
     };
   }
 
-  return { providers, normalizeSettings, customBaseUrl, listModels, generate, createOpenAiFallback };
+  return {
+    providers, normalizeSettings, normalizeAccounts, serializeAccounts, customBaseUrl, listModels, generate,
+    createModelFallback, createOpenAiFallback: createModelFallback, rankedOpenRouterModels,
+    createPkce, openRouterAuthUrl, exchangeOpenRouterCode
+  };
 })();
 
 if (typeof module !== 'undefined') module.exports = QuizAi;
