@@ -149,7 +149,35 @@ const QuizAi = (() => {
     return error;
   }
 
-  async function apiJson(settings, path, fetcher, body, imageRequest = false) {
+  // Reads a server-sent event stream and passes each JSON "data:" event to onEvent.
+  async function readSse(response, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const flush = line => {
+      line = line.replace(/\r$/, '');
+      if (!line.startsWith('data:')) return;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') return;
+      let event;
+      try { event = JSON.parse(data); } catch { return; }
+      onEvent(event);
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        flush(buffer.slice(0, index));
+        buffer = buffer.slice(index + 1);
+      }
+      if (done) break;
+    }
+    if (buffer) flush(buffer);
+  }
+
+  // onEvent: stream the reply (server-sent events) instead of waiting for the whole JSON
+  async function apiJson(settings, path, fetcher, body, imageRequest = false, onEvent = null) {
     const provider = providers[settings.provider];
     const base = settings.provider === 'custom' ? customBaseUrl(settings.baseUrl) : provider.base;
     const headers = settings.provider === 'anthropic' ? {
@@ -174,15 +202,29 @@ const QuizAi = (() => {
         : 'Không kết nối được ' + provider.label + '. Kiểm tra mạng và quyền truy cập từ trình duyệt (CORS).';
       throw Object.assign(new Error(message), { kind: 'network' });
     }
+    const failure = (status, details) => {
+      const raw = String(details?.message || '');
+      const message = (settings.apiKey ? raw.replaceAll(settings.apiKey, '[ẩn API key]') : raw).slice(0, 180);
+      const error = errorFor(status, message, provider.label, imageRequest);
+      return settings.provider === 'openai'
+        ? classifyOpenAiError(error, status, details, response.headers.get('Retry-After'))
+        : error;
+    };
+    if (onEvent && response.ok && /event-stream/i.test(response.headers.get('content-type') || '')) {
+      try {
+        await readSse(response, event => {
+          if (event?.error) throw failure(Number(event.error.code) || 500, event.error);
+          onEvent(event);
+        });
+      } catch (error) {
+        if (error?.kind) throw error;
+        throw Object.assign(new Error('Mất kết nối với ' + provider.label + ' khi đang trả lời.'), { kind: 'network' });
+      }
+      return null;
+    }
     const data = await response.json().catch(() => null);
     if (!response.ok || data?.error) {
-      const raw = String(data?.error?.message || '');
-      const message = (settings.apiKey ? raw.replaceAll(settings.apiKey, '[ẩn API key]') : raw).slice(0, 180);
-      const status = response.ok ? Number(data.error.code) || 400 : response.status;
-      const error = errorFor(status, message, provider.label, imageRequest);
-      throw settings.provider === 'openai'
-        ? classifyOpenAiError(error, status, data?.error, response.headers.get('Retry-After'))
-        : error;
+      throw failure(response.ok ? Number(data.error.code) || 400 : response.status, data?.error);
     }
     if (!data) throw new Error(provider.label + ' không trả dữ liệu JSON hợp lệ.');
     return data;
@@ -274,9 +316,37 @@ const QuizAi = (() => {
     const chatMessages = !anthropic && system.trim() ? [{ role: 'system', content: system.trim() }, ...messages] : messages;
     const body = { model: settings.model, messages: chatMessages, [tokenField]: maxTokens };
     if (anthropic && system.trim()) body.system = system.trim();
+    if (payload.fast) {
+      // Câu trả lời cần nhanh: suy nghĩ ít hơn (chỉ model có suy nghĩ mới nhận tham số này)
+      if (settings.provider === 'openrouter') body.reasoning = { effort: 'low' };
+      else if (openai && /^(?:gpt-5(?:\.\d+)?(?:-mini|-nano)?|o\d(?:-mini)?)(?:-\d{4}-\d{2}-\d{2})?$/.test(settings.model)) body.reasoning_effort = 'low';
+    }
+    const onText = typeof payload.onText === 'function' ? payload.onText : null;
+    let streamed = '';
+    let streamStop = '';
+    const onEvent = !onText ? null : event => {
+      let piece = '';
+      if (anthropic) {
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') piece = event.delta.text || '';
+        if (event.type === 'message_delta' && event.delta?.stop_reason) streamStop = event.delta.stop_reason;
+      } else {
+        const choice = event.choices?.[0];
+        piece = typeof choice?.delta?.content === 'string' ? choice.delta.content : '';
+        if (choice?.finish_reason) streamStop = choice.finish_reason;
+      }
+      if (piece) {
+        streamed += piece;
+        onText(streamed);
+      }
+    };
+    if (onEvent) body.stream = true;
     let data;
     try {
-      data = await apiJson(settings, anthropic ? '/messages' : '/chat/completions', fetcher, body, imageRequest);
+      data = await apiJson(settings, anthropic ? '/messages' : '/chat/completions', fetcher, body, imageRequest, onEvent);
+      if (data === null) {
+        if (!streamed) throw Object.assign(new Error('API không trả nội dung cho model đã chọn.'), { kind: 'overload' });
+        return quizReply(settings.model, streamed, streamStop === 'length' || streamStop === 'max_tokens');
+      }
     } catch (err) {
       if (openai && /responses/i.test(err.message) && /not supported|only supports?|must use/i.test(err.message)) {
         return generateOpenAiResponse(settings, messages, system, maxTokens, fetcher, imageRequest);
@@ -290,6 +360,7 @@ const QuizAi = (() => {
     }
     const text = typeof content === 'string' ? content : (Array.isArray(content) ? content.filter(p => p.type === 'text').map(p => p.text).join('') : '');
     const truncated = anthropic ? data.stop_reason === 'max_tokens' : choice?.finish_reason === 'length';
+    if (onText && text) onText(text);
     return quizReply(settings.model, text, truncated);
   }
 
@@ -414,7 +485,7 @@ const QuizAi = (() => {
   return {
     providers, normalizeSettings, normalizeAccounts, serializeAccounts, customBaseUrl, listModels, generate,
     createModelFallback, createOpenAiFallback: createModelFallback, rankedOpenRouterModels,
-    createPkce, openRouterAuthUrl, exchangeOpenRouterCode
+    createPkce, openRouterAuthUrl, exchangeOpenRouterCode, readSse
   };
 })();
 

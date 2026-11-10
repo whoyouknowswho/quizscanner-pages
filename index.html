@@ -841,7 +841,7 @@
     </div>
   </dialog>
 
-  <script src="quiz-ai.js?v=3"></script>
+  <script src="quiz-ai.js?v=4"></script>
   <script src="quiz-cpp.js?v=2"></script>
   <script>
     // =========================================================================
@@ -2126,11 +2126,11 @@
         document.getElementById('qFileAnswerDisplay').textContent = q.fileAnswer || q.shortAnswer || officialText;
         document.getElementById('qAiAnswerLabel').textContent = q.examOptionOrder ? 'Đánh giá của AI theo thứ tự gốc' : 'Đánh giá của AI (C++)';
         document.getElementById('qAiAnswerDisplay').textContent = q.aiAnswer || 'Chưa phân tích bằng AI (đáp án lấy theo ghi chú trong file)';
-        if (userAns) maybeAutoExplain(q);
         renderExplanationArea(q);
       } else {
         feedbackBox.classList.add('hidden');
       }
+      if (!waitForOcr) maybeAutoExplain(q);
 
       document.getElementById('prevQBtn').disabled = state.currentIndex === 0;
       document.getElementById('nextQBtn').disabled = state.currentIndex === state.questions.length - 1;
@@ -4078,14 +4078,16 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     // quick = gọi thử để kiểm tra model: suy nghĩ ít nhất có thể để trả lời trong vài giây
     function geminiConfigFor(model, payload, noThinkingConfig, quick = false) {
       const body = JSON.parse(JSON.stringify(payload));
+      const fast = body.fast === true; // câu trả lời người dùng đang chờ đọc (giải thích, chat): suy nghĩ ít hơn
+      delete body.fast;
       body.generationConfig = body.generationConfig || {};
       if (/^gemini-3/.test(model)) {
         // Gemini 3: Google khuyên giữ temperature mặc định
         delete body.generationConfig.temperature;
-        if (!noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: quick ? 'low' : /pro/.test(model) ? 'high' : 'medium' };
-      } else if (quick && !noThinkingConfig && /^gemini-2\.5/.test(model)) {
+        if (!noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: quick || fast ? 'low' : /pro/.test(model) ? 'high' : 'medium' };
+      } else if ((quick || fast) && !noThinkingConfig && /^gemini-2\.5/.test(model)) {
         // 2.5 Flash/Lite tắt được suy nghĩ; 2.5 Pro cần tối thiểu 128 token
-        body.generationConfig.thinkingConfig = { thinkingBudget: /pro/.test(model) ? 128 : 0 };
+        body.generationConfig.thinkingConfig = { thinkingBudget: quick ? (/pro/.test(model) ? 128 : 0) : 1024 };
       }
       return body;
     }
@@ -4093,8 +4095,34 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     const GEMINI_PING = { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 256 } };
 
     // Gọi 1 model (có thử lại khi lỗi mạng / quá tải ngắn). Ném AiError đã phân loại nếu thất bại.
+    // Đọc câu trả lời dạng luồng của Gemini; gọi onText với phần chữ đã nhận được tới lúc đó
+    async function readGeminiStream(res, onText, settings, timer) {
+      let text = '';
+      let finishReason;
+      let promptFeedback;
+      try {
+        await QuizAi.readSse(res, event => {
+          const cand = event.candidates?.[0];
+          const piece = (cand?.content?.parts || []).filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('');
+          if (cand?.finishReason) finishReason = cand.finishReason;
+          if (event.promptFeedback) promptFeedback = event.promptFeedback;
+          if (piece) {
+            text += piece;
+            onText(text);
+          }
+        });
+      } catch (err) {
+        throw new AiError(err?.name === 'AbortError' ? 'Gemini trả lời quá lâu' : 'Mất kết nối với Gemini khi đang trả lời', 'network');
+      } finally {
+        clearTimeout(timer);
+      }
+      assertAiConnection(settings);
+      return { candidates: [{ content: { parts: [{ text }] }, finishReason }], promptFeedback };
+    }
+
     async function callGeminiModel(model, payload, settings, attempts = 3, quick = false) {
-      const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+      const onText = typeof payload.onText === 'function' ? payload.onText : null;
+      const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:${onText ? 'streamGenerateContent?alt=sse' : 'generateContent'}`;
       const isPro = /pro/.test(model);
       let delay = 2000;
       let noThinkingConfig = settings.version !== undefined && geminiState.noThinkingConfig;
@@ -4121,6 +4149,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
           delay *= 2;
           continue;
         }
+        if (res.ok && onText) return readGeminiStream(res, onText, settings, timer);
         clearTimeout(timer);
         assertAiConnection(settings);
         if (res.ok) return res.json();
@@ -4942,7 +4971,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (collectPendingQuestions().length > 0 && !extraction.blockedReason) return;
       const processed = extraction.processedThisRun;
       extraction.processedThisRun = 0;
-      const removed = removeDuplicateQuestionsInActiveSet();
+      const removed = removeDuplicateQuestionsInActiveSet() + removeExactDuplicatesInAllSets();
       if (removed > 0 || processed > 1) {
         showToast(`Đã đọc xong ${processed} câu${removed > 0 ? `, gộp ${removed} câu trùng lặp` : ''}.`, 'ph-check-circle');
       }
@@ -4999,6 +5028,63 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         }
       });
       return applyQuestionRemoval(keepOf);
+    }
+
+    // Xoá câu giống y hệt nhau (cùng đề, code, phương án, đáp án) trong từng bộ đề, giữ câu xuất hiện trước.
+    // Câu trả lời và giải thích AI của bản bị xoá được chuyển sang bản giữ lại. Bộ đề thi ngẫu nhiên không bị động tới.
+    function removeExactDuplicatesInAllSets() {
+      let removed = 0;
+      for (const set of Object.values(state.sets)) {
+        if (set.randomExam) continue;
+        const active = set.id === state.activeSetId;
+        const all = Array.isArray(set.allQuestionsBackup) ? set.allQuestionsBackup : active ? state.questions : set.questions;
+        if (!Array.isArray(all) || all.length < 2) continue;
+        const keepOf = QuizData.exactDuplicates(all, {
+          isRead: q => !questionNeedsOcr(q) && !extraction.inFlight.has(q.id),
+          defaultPrompt: DEFAULT_PROMPT
+        });
+        if (keepOf.size === 0) continue;
+        removed += keepOf.size;
+        const answers = answersOfSet(set);
+        const merged = new Set(set.mergedImageHashes || []);
+        keepOf.forEach((keep, q) => {
+          const ans = answers[q.id];
+          if (ans && !answers[keep.id]) {
+            const selText = q.options?.[ans.selected];
+            const letter = Object.keys(keep.options || {}).find(L => optionKey(keep.options[L]) === optionKey(selText));
+            if (letter) answers[keep.id] = { selected: letter, isCorrect: letter === keep.correctLetter };
+          }
+          delete answers[q.id];
+          if (!hasDetailedExplanation(keep) && hasDetailedExplanation(q)) {
+            keep.detailExplanation = q.detailExplanation;
+            keep.detailFor = q.detailFor;
+          }
+          const h = questionImageHash(q);
+          if (h) merged.add(h);
+        });
+        set.mergedImageHashes = Array.from(merged);
+        const kept = q => !keepOf.has(q);
+        if (Array.isArray(set.allQuestionsBackup)) set.allQuestionsBackup = set.allQuestionsBackup.filter(kept);
+        if (active) {
+          const current = state.questions[state.currentIndex];
+          state.questions.splice(0, state.questions.length, ...state.questions.filter(kept));
+          const idx = state.questions.indexOf(keepOf.get(current) || current);
+          state.currentIndex = Math.max(0, Math.min(idx < 0 ? state.currentIndex : idx, state.questions.length - 1));
+        } else {
+          set.questions = set.questions.filter(kept);
+          set.currentIndex = Math.max(0, Math.min(set.currentIndex || 0, set.questions.length - 1));
+        }
+      }
+      return removed;
+    }
+
+    function cleanUpExactDuplicates() {
+      const removed = removeExactDuplicatesInAllSets();
+      if (removed === 0) return 0;
+      saveProgress();
+      renderQuizQuestion();
+      showToast(`Đã xóa ${removed} câu giống y hệt câu khác (đáp án đã làm được giữ lại).`, 'ph-broom');
+      return removed;
     }
 
     // Xoá các câu trùng (keepOf: câu bị bỏ → câu được giữ), chuyển câu trả lời đã làm sang câu được giữ
@@ -6620,6 +6706,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     const explainBusy = new Set();     // questionId đang được AI viết giải thích
     const explainFailed = new Map();   // questionId -> lỗi (chỉ trong phiên)
     const explainRetryAt = new Map();  // questionId -> lúc được tự thử lại sau lỗi tạm thời
+    const explainPartial = new Map();  // questionId -> phần giải thích AI đã viết được (đang viết tiếp)
     const chatBusy = new Set();        // questionId đang chờ AI trả lời chat
     const chatErrors = new Map();      // questionId -> lỗi chat gần nhất
     const chatUi = { qid: null, count: -1, open: true };
@@ -6743,11 +6830,14 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       return lines.join('\n');
     }
 
-    async function aiText(system, contents, cfg = {}, settings = captureAiConnection()) {
+    // options.onText: nhận dần chữ khi AI đang viết; options.fast: ưu tiên trả lời nhanh (suy nghĩ ít hơn)
+    async function aiText(system, contents, cfg = {}, settings = captureAiConnection(), options = {}) {
       const payload = {
         systemInstruction: { parts: [{ text: system }] },
         contents,
-        generationConfig: { temperature: 0.4, maxOutputTokens: 8192, ...cfg }
+        generationConfig: { temperature: 0.4, maxOutputTokens: 8192, ...cfg },
+        ...(options.fast ? { fast: true } : {}),
+        ...(options.onText ? { onText: options.onText } : {})
       };
       let data;
       try {
@@ -6784,12 +6874,13 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (!box) return;
       const busy = explainBusy.has(q.id);
       const has = hasDetailedExplanation(q);
-      const text = getExplanationText(q).trim();
+      const partial = busy ? String(explainPartial.get(q.id) || '').trim() : '';
+      const text = partial || getExplanationText(q).trim();
       let html = '';
       if (busy && !has) {
         html += '<div class="flex items-center gap-2 text-purple-300 font-semibold"><i class="ph-bold ph-spinner animate-spin"></i> AI đang viết giải thích chi tiết, từng bước...</div>';
       }
-      if (text) html += `<div class="${busy && !has ? 'opacity-70 ' : ''}space-y-1.5">${renderMarkdown(text)}</div>`;
+      if (text) html += `<div class="${busy && !has && !partial ? 'opacity-70 ' : ''}space-y-1.5">${renderMarkdown(text)}</div>`;
       else if (!busy) html += '<div class="text-slate-400">Chưa có giải thích cho câu này. Bấm "Giải thích chi tiết hơn" để AI viết, hoặc hỏi thêm ở khung chat bên dưới.</div>';
       box.innerHTML = html;
 
@@ -6825,7 +6916,13 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         ensureCompleteOptions(q);
         const parts = [{ text: DETAIL_EXPLAIN_PROMPT }];
         if (shouldAttachImages(q)) (await getImageParts(q)).forEach(p => parts.push(p));
-        const text = await aiText(chatSystemPrompt(q, false), [{ role: 'user', parts }], { temperature: 0.3 }, settings);
+        // Hiện dần chữ khi AI đang viết (vẽ lại tối đa 1 lần / khung hình)
+        let frame = 0;
+        const onText = partial => {
+          explainPartial.set(q.id, partial);
+          if (!frame) frame = requestAnimationFrame(() => { frame = 0; refreshExplainUi(q); });
+        };
+        const text = await aiText(chatSystemPrompt(q, false), [{ role: 'user', parts }], { temperature: 0.3 }, settings, { fast: true, onText });
         q.detailExplanation = text;
         q.detailFor = detailKey(q);
         syncQuestionCopies(q);
@@ -6843,6 +6940,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         else if (force) showToast('Không viết được giải thích: ' + (err?.message || 'lỗi'), 'ph-warning');
       } finally {
         explainBusy.delete(q.id);
+        explainPartial.delete(q.id);
         refreshExplainUi(q);
       }
     }
@@ -6853,14 +6951,16 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (!getAiSettings().autoExplain || !aiAvailable()) return;
       if (hasDetailedExplanation(q) || explainBusy.has(q.id) || extraction.inFlight.has(q.id)) return;
       if (explainFailed.has(q.id) && Date.now() < (explainRetryAt.get(q.id) ?? Infinity)) return;
-      if (autoExplainFor === q.id) return;
+      if (questionNeedsOcr(q) || autoExplainFor === q.id) return;
       autoExplainFor = q.id;
+      // Viết sẵn ngay khi mở câu (ẩn tới khi trả lời) nên thường xong trước lúc bạn chọn đáp án;
+      // câu đã trả lời thì bắt đầu gần như ngay
+      const answered = !!state.userAnswers[q.id];
       setTimeout(() => {
         autoExplainFor = null;
         const cur = state.questions[state.currentIndex];
-        const ans = cur ? state.userAnswers[cur.id] : null;
-        if (cur === q && ans && canShowQuestionFeedback() && !hasDetailedExplanation(q)) generateDetailedExplanation(q, false);
-      }, 700);
+        if (cur === q && !hasDetailedExplanation(q) && !questionNeedsOcr(q)) generateDetailedExplanation(q, false);
+      }, answered ? 300 : 1200);
     }
 
     // ----------------------------- CHAT HỎI TIẾP -----------------------------
@@ -7021,10 +7121,11 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       showQuizDataReady();
       if (location.hash === '#du-lieu') openQuizDataPanel();
       else renderQuizQuestion();
+      cleanUpExactDuplicates();
       finishOpenRouterLogin();
     });
   </script>
-  <script src="quiz-data.js?v=4"></script>
+  <script src="quiz-data.js?v=5"></script>
   <script src="quiz-sync.js?v=4"></script>
 </body>
 </html>

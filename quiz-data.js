@@ -265,6 +265,42 @@ const QuizData = (() => {
     return JSON.stringify([prompt, code, blocks, options, answer]);
   }
 
+  const squash = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+  // Content key of a question for exact-copy detection (whitespace ignored), or null when it cannot be compared.
+  // isRead = false: the text has not been read from the image yet, so only an identical image counts.
+  function exactDuplicateKey(question, isRead = true, defaultPrompt = '') {
+    const image = question.imageHash || (question.images?.length ? JSON.stringify([question.images, question.multiQuestionOrdinal]) : '');
+    if (!isRead) return image ? 'scan:' + image : null;
+    const blocks = Array.isArray(question.blocks) && question.blocks.length
+      ? question.blocks
+      : [{ type: 'text', content: question.prompt }, { type: 'code', content: question.code }];
+    const placeholder = squash(defaultPrompt);
+    const parts = blocks.map(block => [block?.type === 'code' ? 'code' : 'text', squash(block?.content)])
+      .filter(([type, text]) => text && !(type === 'text' && text === placeholder));
+    if (!parts.length) return image ? 'scan:' + image : null;
+    const options = Object.values(question.options || {}).map(squash).filter(Boolean).sort();
+    const answer = squash(question.options?.[question.correctLetter] ?? question.shortAnswer);
+    if (options.length < 2 && !answer) return null;
+    // Without code, the same short wording may belong to different pictures: compare those by image too.
+    const hasCode = parts.some(([type]) => type === 'code');
+    return JSON.stringify([parts, options, answer, hasCode ? '' : image]);
+  }
+
+  // Questions that are exact copies of an earlier one. Returns Map(copy → question kept), keeping the first.
+  function exactDuplicates(questions, { isRead = () => true, defaultPrompt = '' } = {}) {
+    const firstByKey = new Map();
+    const copies = new Map();
+    for (const question of questions) {
+      const key = exactDuplicateKey(question, isRead(question), defaultPrompt);
+      if (!key) continue;
+      const first = firstByKey.get(key);
+      if (!first) firstByKey.set(key, question);
+      else if (first !== question && first.id !== question.id) copies.set(question, first);
+    }
+    return copies;
+  }
+
   // Fisher–Yates, shared by regular shuffling and drawing questions without replacement.
   function shuffleInPlace(items, random = Math.random) {
     for (let i = items.length - 1; i > 0; i--) {
@@ -312,7 +348,7 @@ const QuizData = (() => {
   return {
     mimeType, createBackup, readBackup, inspectBackup, mergeBackups, createQuizStore,
     topicLabels, questionTopics, buildQuestionBank, randomExamSize, createRandomExam, shuffleInPlace,
-    questionChoices, isExamPending, gradeExam
+    questionChoices, isExamPending, gradeExam, exactDuplicates
   };
 })();
 
