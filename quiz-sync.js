@@ -9,6 +9,8 @@ let cloudUploadBlocked = false;
 let cloudTimer;
 let cloudFlight;
 let quizReloading = false;
+let quizLastSavedAt = 0;
+const quizProgressJournalKey = 'QuizScannerPro_Progress_v1';
 const cloudRevisionKey = 'cloud_revision';
 const cloudPendingKey = 'cloud_pending';
 const dataEl = id => document.getElementById(id);
@@ -55,6 +57,38 @@ function readCloudMetadata(store) {
   return Promise.all([idbResult(store.get(cloudRevisionKey)), idbResult(store.get(cloudPendingKey))]);
 }
 
+function nextQuizSaveTime() {
+  quizLastSavedAt = Math.max(Date.now(), quizLastSavedAt + 1);
+  return quizLastSavedAt;
+}
+
+function readQuizProgressJournal() {
+  if (quizAccount) return null;
+  try {
+    const progress = JSON.parse(localStorage.getItem(quizProgressJournalKey));
+    return Number.isSafeInteger(progress?.savedAt) && progress.sets ? progress : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeQuizProgressJournal(progress) {
+  if (quizAccount) return false;
+  try {
+    localStorage.setItem(quizProgressJournalKey, JSON.stringify(progress));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearQuizProgressJournal(savedAt) {
+  const journal = readQuizProgressJournal();
+  if (journal && journal.savedAt <= savedAt) {
+    try { localStorage.removeItem(quizProgressJournalKey); } catch { /* Browser storage can be disabled. */ }
+  }
+}
+
 async function readQuizData() {
   const tx = await openQuizTransaction(['app_state', 'uploaded_files'], 'readonly');
   const app = tx.objectStore('app_state');
@@ -72,15 +106,18 @@ async function readQuizData() {
   const sets = saved?.sets || {};
   let activeSetId = saved?.activeSetId;
   let instantFeedback = saved?.instantFeedback !== false;
-  if (light?.sets && light.savedAt >= (saved?.savedAt || 0)) {
-    for (const [id, progress] of Object.entries(light.sets)) {
+  const journal = readQuizProgressJournal();
+  const latestProgress = journal && journal.savedAt > (light?.savedAt || 0) ? journal : light;
+  quizLastSavedAt = Math.max(quizLastSavedAt, saved?.savedAt || 0, latestProgress?.savedAt || 0);
+  if (latestProgress?.sets && latestProgress.savedAt >= (saved?.savedAt || 0)) {
+    for (const [id, progress] of Object.entries(latestProgress.sets)) {
       if (Object.hasOwn(sets, id)) {
         sets[id].userAnswers = progress.userAnswers || {};
         sets[id].currentIndex = progress.currentIndex || 0;
       }
     }
-    if (Object.hasOwn(sets, light.activeSetId)) activeSetId = light.activeSetId;
-    if (typeof light.instantFeedback === 'boolean') instantFeedback = light.instantFeedback;
+    if (Object.hasOwn(sets, latestProgress.activeSetId)) activeSetId = latestProgress.activeSetId;
+    if (typeof latestProgress.instantFeedback === 'boolean') instantFeedback = latestProgress.instantFeedback;
   }
   if (!Object.hasOwn(sets, activeSetId)) activeSetId = Object.keys(sets)[0] ?? null;
   return {
@@ -102,17 +139,21 @@ function currentQuizSnapshot() {
 }
 
 function writeQuizSnapshot(snapshot, { revision, pending }) {
+  const savedAt = nextQuizSaveTime();
   return writeQuizData(['app_state', 'uploaded_files'], tx => {
     const { uploadedFiles, ...quiz } = snapshot;
     const app = tx.objectStore('app_state');
-    app.put({ ...quiz, id: 'main_state', savedAt: Date.now() });
+    app.put({ ...quiz, id: 'main_state', savedAt });
     app.delete('progress_state');
     if (revision !== undefined) app.put({ id: cloudRevisionKey, value: revision });
     if (!pending) app.delete(cloudPendingKey);
     const files = tx.objectStore('uploaded_files');
     files.clear();
     for (const file of uploadedFiles) files.put(file);
-  }, { mark: pending, duringPause: true });
+  }, { mark: pending, duringPause: true }).then(saved => {
+    if (saved) clearQuizProgressJournal(savedAt);
+    return saved;
+  });
 }
 
 function quizDataStatus(message, badgeText) {
@@ -239,7 +280,7 @@ async function initializeQuizData() {
   try {
     const managed = Boolean(document.querySelector('meta[name="quiz-account-server"]'));
     if (!managed) {
-      quizDataStatus('Đang lưu trên thiết bị này. Tải bản sao lưu để chuyển dữ liệu sang máy khác.', 'Lưu trên thiết bị');
+      quizDataStatus('Bộ đề và tiến trình tự mở lại khi tải lại trang trong trình duyệt này.', 'Lưu trên thiết bị');
     } else {
       const response = await fetch('/api/account', { signal: AbortSignal.timeout(12_000) });
       if (!response.ok) throw await quizApiError(response);
@@ -437,7 +478,8 @@ backupInput.addEventListener('change', async () => {
 
 window.addEventListener('online', () => scheduleCloudUpload(0));
 window.addEventListener('beforeunload', event => {
-  if (quizAccount && !quizReloading && (cloudHasPending || saveTimer)) {
+  const cloudUnsaved = quizAccount && (cloudHasPending || saveTimer);
+  if (!quizReloading && (quizFullSavesPending || quizFullSaveFailed || cloudUnsaved)) {
     event.preventDefault();
     event.returnValue = true;
   }

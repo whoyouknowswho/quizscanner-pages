@@ -201,7 +201,7 @@
         <div class="space-y-1 max-w-md mx-auto">
           <h3 class="text-lg sm:text-xl font-extrabold">Chưa có câu hỏi nào trong trang này</h3>
           <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            Hãy vào mục <strong>Quét File</strong> để tải file Word/PDF/Ảnh lên (tự động lưu vĩnh viễn trên trình duyệt) hoặc vào mục <strong>Các Bộ Câu Hỏi</strong> để mở bộ đề đã lưu.
+            Vào <strong>Quét File</strong> để lưu bộ đề trên trình duyệt này hoặc vào <strong>Các Bộ Câu Hỏi</strong> để mở bộ đề đã lưu.
           </p>
         </div>
         <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -436,7 +436,7 @@
             <button id="importBackupBtn" type="button" class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold"><i class="ph-bold ph-upload-simple"></i> Nạp bản sao lưu</button>
             <input id="importBackupInput" type="file" class="hidden" accept=".quizbackup,application/octet-stream">
           </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">File .quizbackup chứa toàn bộ bộ đề, ảnh, tiến trình và file gốc. Nạp file sẽ gộp dữ liệu và giữ cả hai bản nếu trùng mã nhưng khác nội dung.</p>
+          <p class="text-xs text-slate-500 dark:text-slate-400">File .quizbackup dùng để dự phòng hoặc chuyển máy. File chứa bộ đề, ảnh, tiến trình và file gốc. Khi nạp, web gộp dữ liệu và giữ cả hai bản nếu cùng mã nhưng khác nội dung.</p>
           <p id="backupNotice" class="text-xs font-semibold text-slate-600 dark:text-slate-300" role="status"></p>
         </div>
       </section>
@@ -770,6 +770,9 @@
     const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
     const LEGACY_STORAGE_KEY = 'QuizScannerPro_MultiSets_v2';
     const IDB_NAME = 'QuizScannerPro_IndexedDB_v3';
+    const pendingUploadedFiles = new Map();
+    let quizFullSavesPending = 0;
+    let quizFullSaveFailed = false;
 
     const state = {
       sets: {},            // { [setId]: { id, name, createdAt, questions: [], allQuestionsBackup: null, userAnswers: {}, currentIndex: 0 } }
@@ -797,7 +800,10 @@
 
     function flashSaveBadge() {
       const badge = document.getElementById('saveStatusBadge');
-      if (!badge || quizAccount) return;
+      if (!badge || quizAccount || quizFullSaveFailed) return;
+      if (badge.textContent === 'Lỗi lưu dữ liệu') {
+        quizDataStatus('Đã lưu bộ đề và tiến trình trên thiết bị này.');
+      }
       badge.textContent = 'Đã lưu trên thiết bị';
       badge.classList.remove('opacity-60');
       setTimeout(() => badge.classList.add('opacity-60'), 1200);
@@ -811,31 +817,54 @@
       currentSet.currentIndex = state.currentIndex;
     }
 
-    async function saveProgress() {
+    async function saveProgress(newFiles = []) {
       syncActiveSetToStore();
+      if (newFiles.length) {
+        const incomingIds = new Set(newFiles.map(file => file.id));
+        for (const file of newFiles) pendingUploadedFiles.set(file.id, file);
+        state.uploadedFiles = newFiles.slice().reverse().concat(state.uploadedFiles.filter(file => !incomingIds.has(file.id)));
+        renderUploadedFilesList();
+      }
       updateHeaderSetInfo();
 
       const payload = {
         id: 'main_state',
-        savedAt: Date.now(),
+        savedAt: nextQuizSaveTime(),
         activeSetId: state.activeSetId,
         instantFeedback: state.instantFeedback,
         sets: state.sets
       };
 
+      const files = [...pendingUploadedFiles.values()];
       let idbOk = false;
+      quizFullSavesPending++;
       try {
-        idbOk = await writeQuizData(['app_state'], tx => {
+        const stores = files.length ? ['app_state', 'uploaded_files'] : ['app_state'];
+        idbOk = await writeQuizData(stores, tx => {
           const app = tx.objectStore('app_state');
           app.put(payload);
           app.delete('progress_state');
+          if (files.length) {
+            const uploads = tx.objectStore('uploaded_files');
+            for (const file of files) uploads.put(file);
+          }
         });
-        if (idbOk) flashSaveBadge();
+        if (idbOk) {
+          for (const file of files) {
+            if (pendingUploadedFiles.get(file.id) === file) pendingUploadedFiles.delete(file.id);
+          }
+          quizFullSaveFailed = false;
+          clearQuizProgressJournal(payload.savedAt);
+          flashSaveBadge();
+        }
       } catch (err) {
+        quizFullSaveFailed = true;
         reportQuizSaveError(err);
+      } finally {
+        quizFullSavesPending--;
       }
 
-      if (quizAccount || quizDataPaused) return;
+      if (quizAccount || quizDataPaused) return idbOk;
       // Giữ tương thích với bản lưu cũ của chế độ khách.
       if (estimateStateSize() < 4000000) {
         try {
@@ -846,6 +875,7 @@
       } else if (idbOk) {
         try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch (_) { /* bỏ qua */ }
       }
+      return idbOk;
     }
 
     // Lưu NHẸ: chỉ ghi tiến trình làm bài (đáp án đã chọn + vị trí câu), không động tới ảnh.
@@ -854,7 +884,7 @@
       syncActiveSetToStore();
       const progress = {
         id: 'progress_state',
-        savedAt: Date.now(),
+        savedAt: nextQuizSaveTime(),
         activeSetId: state.activeSetId,
         instantFeedback: state.instantFeedback,
         sets: {}
@@ -862,21 +892,25 @@
       Object.values(state.sets).forEach(s => {
         progress.sets[s.id] = { userAnswers: s.userAnswers || {}, currentIndex: Number.isInteger(s.currentIndex) ? s.currentIndex : 0 };
       });
+      // Keep the latest answers and position across a reload while IndexedDB is still writing.
+      const journalSaved = writeQuizProgressJournal(progress);
       try {
         const saved = await writeQuizData(['app_state'], tx => {
           tx.objectStore('app_state').put(progress);
         });
-        if (saved) flashSaveBadge();
+        if (saved) {
+          clearQuizProgressJournal(progress.savedAt);
+          flashSaveBadge();
+        }
       } catch (err) {
-        reportQuizSaveError(err);
+        if (!journalSaved) reportQuizSaveError(err);
       }
     }
 
-    // Lưu tiến trình ngay (nhẹ) + hẹn ghi đầy đủ sau vài giây
+    // Lưu đáp án và vị trí mà không ghi lại toàn bộ ảnh của bộ đề.
     function persistProgressSoon() {
       updateHeaderSetInfo();
       saveProgressLight();
-      scheduleSave(4000);
     }
 
     // Đóng tab / chuyển tab: ghi đầy đủ ngay nếu còn việc đang chờ lưu
@@ -905,33 +939,17 @@
       return size;
     }
 
-    async function saveUploadedFileRecord(fileObj, linkedSetId, questionCount, contentHash = '', existingRecord = null) {
-      try {
-        const arrayBuffer = await fileObj.arrayBuffer();
-        const record = {
-          // File giống hệt file đã lưu → cập nhật bản ghi cũ thay vì lưu thêm 1 bản trùng
-          id: existingRecord ? existingRecord.id : 'file-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-          name: fileObj.name,
-          type: fileObj.type || 'application/octet-stream',
-          size: fileObj.size || arrayBuffer.byteLength,
-          uploadedAt: new Date().toLocaleString('vi-VN'),
-          arrayBuffer,
-          contentHash: contentHash || hashBytes(new Uint8Array(arrayBuffer)),
-          linkedSetId,
-          questionCount: questionCount || 0
-        };
-        const saved = await writeQuizData(['uploaded_files'], tx => {
-          tx.objectStore('uploaded_files').put(record);
-        });
-        if (!saved) return;
-        if (existingRecord) state.uploadedFiles = state.uploadedFiles.filter(f => f.id !== existingRecord.id);
-
-        state.uploadedFiles.unshift(record);
-        updateHeaderSetInfo();
-        renderUploadedFilesList();
-      } catch (err) {
-        reportQuizSaveError(err);
-      }
+    function buildUploadedFileRecord(fileObj, arrayBuffer, questionCount, contentHash, existingRecord) {
+      return {
+        id: existingRecord ? existingRecord.id : 'file-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+        name: fileObj.name,
+        type: fileObj.type || 'application/octet-stream',
+        size: fileObj.size || arrayBuffer.byteLength,
+        uploadedAt: new Date().toLocaleString('vi-VN'),
+        arrayBuffer,
+        contentHash: contentHash || hashBytes(new Uint8Array(arrayBuffer)),
+        questionCount: questionCount || 0
+      };
     }
 
     async function loadProgress() {
@@ -2071,7 +2089,7 @@
     // =========================================================================
     // 5. QUESTION SETS MANAGEMENT (QUẢN LÝ TỪNG BỘ CÂU HỎI)
     // =========================================================================
-    function createQuestionSet(name, questionsArray = []) {
+    function createQuestionSet(name, questionsArray = [], shouldSave = true) {
       const setId = 'set-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
       const cleanName = (name || '').trim() || `Bộ câu hỏi ${Object.keys(state.sets).length + 1}`;
       state.sets[setId] = {
@@ -2083,7 +2101,7 @@
         userAnswers: {},
         currentIndex: 0
       };
-      activateSet(setId, true);
+      activateSet(setId, shouldSave);
       return setId;
     }
 
@@ -2469,6 +2487,7 @@
           tx.objectStore('uploaded_files').delete(fileId);
         });
         if (!saved) return;
+        pendingUploadedFiles.delete(fileId);
         state.uploadedFiles = state.uploadedFiles.filter(f => f.id !== fileId);
         renderUploadedFilesList();
         showToast('Đã xóa file khỏi kho lưu trữ.', 'ph-trash');
@@ -2485,6 +2504,7 @@
           tx.objectStore('uploaded_files').clear();
         });
         if (!saved) return;
+        pendingUploadedFiles.clear();
         state.uploadedFiles = [];
         renderUploadedFilesList();
         showToast('Đã xóa lịch sử file tải lên.', 'ph-trash');
@@ -5878,7 +5898,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         const saveMode = document.getElementById('scanSaveModeSelect').value;
         const appendMode = saveMode === 'append' && state.activeSetId && state.sets[state.activeSetId];
         const extracted = [];
-        const perFileCounts = [];
+        const originals = [];
         let skippedDuplicates = 0;
         let reopenSetId = null;
 
@@ -5891,7 +5911,8 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
         for (const file of state.selectedFiles) {
           const lower = file.name.toLowerCase();
-          const contentHash = hashBytes(new Uint8Array(await file.arrayBuffer()));
+          const fileBytes = await file.arrayBuffer();
+          const contentHash = hashBytes(new Uint8Array(fileBytes));
 
           // File này đã từng quét thành 1 bộ đề → hỏi mở lại bộ cũ thay vì quét trùng
           const prevRecord = findUploadedRecordByHash(contentHash);
@@ -5954,7 +5975,9 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
             return true;
           });
           extracted.push(...uniqueQuestions);
-          perFileCounts.push({ file, count: uniqueQuestions.length, contentHash, prevRecord });
+          if (shouldRecordUploadedFile) {
+            originals.push(buildUploadedFileRecord(file, fileBytes, uniqueQuestions.length, contentHash, prevRecord));
+          }
         }
 
         updateScanProgress(95, 'Đang lưu bộ đề và file lên trình duyệt...');
@@ -5965,24 +5988,20 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
             || state.selectedFiles[0].name.replace(/\.[^/.]+$/, '');
 
           let targetSetId = state.activeSetId;
-
           if (appendMode) {
             state.questions.push(...extracted);
-            await saveProgress();
-            showToast(`Đã thêm ${extracted.length} câu vào bộ "${state.sets[state.activeSetId].name}"${dupText}! Đang đọc chữ trong ảnh...`, 'ph-check-circle');
           } else {
-            targetSetId = createQuestionSet(customSetName, extracted);
-            await saveProgress();
-            showToast(`Đã tạo bộ "${customSetName}" (${extracted.length} câu${dupText}). Đang đọc chữ trong ảnh...`, 'ph-check-circle');
+            targetSetId = createQuestionSet(customSetName, extracted, false);
+          }
+          for (const record of originals) record.linkedSetId = targetSetId;
+          const saved = await saveProgress(originals);
+          if (saved) {
+            showToast(appendMode
+              ? `Đã lưu thêm ${extracted.length} câu vào bộ "${state.sets[targetSetId].name}"${dupText}.`
+              : `Đã lưu bộ "${customSetName}" (${extracted.length} câu${dupText}).`, 'ph-check-circle');
           }
 
-          if (shouldRecordUploadedFile) {
-            for (const item of perFileCounts) {
-              await saveUploadedFileRecord(item.file, targetSetId, item.count, item.contentHash, item.prevRecord);
-            }
-          }
-
-          updateScanProgress(100, 'Đã lưu hoàn tất!');
+          updateScanProgress(100, saved ? 'Đã lưu hoàn tất!' : 'Đã quét xong nhưng chưa lưu được.');
           document.getElementById('scanSetNameInput').value = '';
           state.selectedFiles = [];
           fileInput.value = '';
@@ -6457,6 +6476,6 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     });
   </script>
   <script src="quiz-data.js?v=2"></script>
-  <script src="quiz-sync.js?v=2"></script>
+  <script src="quiz-sync.js?v=3"></script>
 </body>
 </html>
