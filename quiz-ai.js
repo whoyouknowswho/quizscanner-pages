@@ -1,7 +1,7 @@
 const QuizAi = (() => {
   const providers = Object.freeze({
-    gemini: { label: 'Google Gemini' },
-    openai: { label: 'OpenAI', base: 'https://api.openai.com/v1', tokenField: 'max_completion_tokens' },
+    gemini: { label: 'Google Gemini', autoModel: true },
+    openai: { label: 'OpenAI', base: 'https://api.openai.com/v1', tokenField: 'max_completion_tokens', autoModel: true },
     anthropic: { label: 'Anthropic Claude', base: 'https://api.anthropic.com/v1' },
     openrouter: { label: 'OpenRouter', base: 'https://openrouter.ai/api/v1' },
     groq: { label: 'Groq', base: 'https://api.groq.com/openai/v1', tokenField: 'max_completion_tokens' },
@@ -12,14 +12,16 @@ const QuizAi = (() => {
   function normalizeSettings(saved = {}, builtInKey = '') {
     const provider = saved.provider ?? 'gemini';
     const known = Object.hasOwn(providers, provider);
+    const autoModel = !known || providers[provider].autoModel;
     const userKey = known ? String(saved.apiKey || '').trim() : '';
     const geminiKey = known && provider === 'gemini' ? builtInKey.trim() : '';
+    const model = known ? String(saved.model || '').trim() : '';
     return {
       provider: known ? provider : 'gemini',
       baseUrl: provider === 'custom' ? String(saved.baseUrl || '').trim() : '',
       userKey,
       apiKey: userKey || geminiKey,
-      model: (known && String(saved.model || '').trim()) || (provider === 'gemini' || !known ? 'auto' : ''),
+      model: autoModel && (!model || /^auto$/i.test(model)) ? 'auto' : model,
       vision: typeof saved.vision === 'boolean' ? saved.vision : null,
       autoOcr: saved.autoOcr !== false,
       autoExplain: saved.autoExplain !== false
@@ -48,6 +50,27 @@ const QuizAi = (() => {
     )) kind = 'vision';
     else if (status === 404) kind = 'model';
     return Object.assign(new Error(`${provider} (HTTP ${status})${message ? ' · ' + message : ''}`), { kind });
+  }
+
+  function classifyOpenAiError(error, status, details, retryAfter) {
+    const code = String(details?.code || '');
+    if (status === 429 && [code, details?.type].some(value =>
+      /^(?:insufficient_quota|credit_balance_exhausted|(?:organization_|project_)?(?:spend|usage)_limit_exceeded)$/.test(value))) {
+      error.kind = 'fatal';
+    } else if ((status === 429 || status === 503) && code === 'slow_down') {
+      error.kind = 'slow_down';
+    } else if ([400, 403, 404].includes(status) && error.kind !== 'vision' && (
+      /^(?:model_(?:not_found|not_available|not_supported|access_denied)|unsupported_model)$/.test(code)
+      || details?.param === 'model'
+      || (status === 403 && /does not have access to (?:the )?model/i.test(error.message))
+    )) {
+      error.kind = 'model';
+    }
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      error.retryAt = Number.isFinite(seconds) ? Date.now() + seconds * 1000 : Date.parse(retryAfter);
+    }
+    return error;
   }
 
   async function apiJson(settings, path, fetcher, body, imageRequest = false) {
@@ -79,7 +102,11 @@ const QuizAi = (() => {
     if (!response.ok || data?.error) {
       const raw = String(data?.error?.message || '');
       const message = (settings.apiKey ? raw.replaceAll(settings.apiKey, '[ẩn API key]') : raw).slice(0, 180);
-      throw errorFor(response.ok ? Number(data.error.code) || 400 : response.status, message, provider.label, imageRequest);
+      const status = response.ok ? Number(data.error.code) || 400 : response.status;
+      const error = errorFor(status, message, provider.label, imageRequest);
+      throw settings.provider === 'openai'
+        ? classifyOpenAiError(error, status, data?.error, response.headers.get('Retry-After'))
+        : error;
     }
     if (!data) throw new Error(provider.label + ' không trả dữ liệu JSON hợp lệ.');
     return data;
@@ -158,7 +185,7 @@ const QuizAi = (() => {
     });
     const maxTokens = config.maxOutputTokens || 8192;
     const openai = settings.provider === 'openai';
-    if (openai && /(?:^(?:gpt-5(?:\.\d+)?|o\d+)-pro(?:-|$)|codex)/i.test(settings.model)) {
+    if (openai && /(?:^gpt-6(?:[.-]|$)|^(?:gpt-5(?:\.\d+)?|o\d+)-pro(?:-|$)|codex)/i.test(settings.model)) {
       return generateOpenAiResponse(settings, messages, system, maxTokens, fetcher, imageRequest);
     }
     const tokenField = providers[settings.provider].tokenField || 'max_tokens';
@@ -184,7 +211,100 @@ const QuizAi = (() => {
     return quizReply(settings.model, text, truncated);
   }
 
-  return { providers, normalizeSettings, customBaseUrl, listModels, generate };
+  function rankedOpenAiModels(models, needsImages) {
+    const byFamily = new Map();
+    for (const model of models) {
+      const family = model.id.replace(/-\d{4}-\d{2}-\d{2}$/, '');
+      // Chỉ tự chọn các dòng GPT và o-series dùng cho hỏi đáp thông thường.
+      // Các bản pro/astra và model chuyên biệt vẫn có thể được chọn thủ công.
+      if (!/^(?:gpt-(?:\d+(?:\.\d+)?o?)(?:-(?:mini|nano|luna|sol|terra|turbo))?|o[134](?:-mini)?)$/.test(family)) continue;
+      const textOnly = model.vision === false || /^(?:gpt-3\.5|gpt-4$|o[13]-mini$)/.test(family);
+      if (needsImages && textOnly) continue;
+      const current = byFamily.get(family);
+      if (!current || model.id === family || (current !== family && model.id > current)) byFamily.set(family, model.id);
+    }
+    const lite = name => /-(?:mini|luna|nano)$/.test(name);
+    return [...byFamily.entries()].sort(([a], [b]) =>
+      Number(lite(b)) - Number(lite(a)) || b.localeCompare(a, 'en', { numeric: true })
+    ).map(([, id]) => id);
+  }
+
+  function createOpenAiFallback(settings, { fetcher = fetch, assertCurrent = () => {} } = {}) {
+    const blockedUntil = new Map();
+    const textOnly = new Set();
+    let catalog;
+    let pauseUntil = 0;
+    const pausedError = message => Object.assign(new Error(message), { kind: 'all', retryAt: pauseUntil });
+    function slowDown(err) {
+      pauseUntil = Math.max(pauseUntil, Date.now() + 60_000, err.retryAt || 0);
+      return pausedError(err.message);
+    }
+    const guardedFetch = (url, options) => {
+      assertCurrent();
+      return fetcher(url, options);
+    };
+
+    return async payload => {
+      const needsImages = payload.contents.some(message => message.parts.some(part => part.inlineData));
+      const tried = new Set();
+      let lastError;
+      const available = model => !tried.has(model) && !(needsImages && textOnly.has(model))
+        && (blockedUntil.get(model) || 0) <= Date.now();
+
+      async function tryModel(model) {
+        assertCurrent();
+        if (pauseUntil > Date.now()) throw pausedError('OpenAI đang yêu cầu giảm tần suất gửi.');
+        tried.add(model);
+        try {
+          const reply = await generate({ ...settings, model }, payload, guardedFetch);
+          assertCurrent();
+          return reply;
+        } catch (err) {
+          assertCurrent();
+          if (err.kind === 'slow_down') throw slowDown(err);
+          if (err.kind === 'vision' && needsImages) textOnly.add(model);
+          else if (err.kind === 'model') blockedUntil.set(model, Infinity);
+          else if (err.kind === 'rate' || err.kind === 'overload') {
+            blockedUntil.set(model, Math.max(Date.now() + 60_000, err.retryAt || 0));
+          } else throw err;
+          lastError = err;
+          return null;
+        }
+      }
+
+      assertCurrent();
+      if (pauseUntil > Date.now()) throw pausedError('OpenAI đang yêu cầu giảm tần suất gửi.');
+      const preferred = settings.model && !/^auto$/i.test(settings.model) ? settings.model : '';
+      if (preferred && needsImages && settings.vision === false) textOnly.add(preferred);
+      if (preferred && available(preferred)) {
+        const reply = await tryModel(preferred);
+        if (reply) return reply;
+      }
+
+      catalog ??= listModels(settings, guardedFetch).catch(err => {
+        catalog = null;
+        throw err.kind === 'slow_down' ? slowDown(err) : err;
+      });
+      const models = rankedOpenAiModels(await catalog, needsImages);
+      assertCurrent();
+      for (const model of models) {
+        if (tried.size >= 4) break;
+        if (!available(model)) continue;
+        const reply = await tryModel(model);
+        if (reply) return reply;
+      }
+
+      const reason = lastError ? ' ' + lastError.message : '';
+      const recoverAt = [preferred, ...models].map(model => blockedUntil.get(model)).filter(Number.isFinite);
+      if (models.some(available)) recoverAt.push(Date.now() + 1000);
+      const summary = needsImages ? 'Hiện chưa có model OpenAI phù hợp để đọc ảnh.' : 'Chưa tìm được model OpenAI dùng được.';
+      throw Object.assign(new Error(summary + reason), {
+        kind: needsImages ? 'vision' : 'all', retryAt: Math.min(...recoverAt)
+      });
+    };
+  }
+
+  return { providers, normalizeSettings, customBaseUrl, listModels, generate, createOpenAiFallback };
 })();
 
 if (typeof module !== 'undefined') module.exports = QuizAi;

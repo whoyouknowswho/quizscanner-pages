@@ -731,6 +731,7 @@
           <label for="aiModelList" class="font-bold block text-slate-400">Model</label>
           <select id="aiModelList" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"></select>
           <input id="aiModelInput" type="text" aria-label="Tên model nhập thủ công" autocomplete="off" spellcheck="false" placeholder="Hoặc nhập mã model thủ công" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <p id="aiOpenAiFallbackHint" class="hidden text-[11px] text-slate-400">OpenAI ưu tiên model bạn chọn và thử model khác nếu model đó không khả dụng.</p>
         </div>
         <div class="flex items-center gap-2 flex-wrap">
           <button type="button" id="aiLoadModelsBtn" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-60">
@@ -761,7 +762,7 @@
     </div>
   </div>
 
-  <script src="quiz-ai.js"></script>
+  <script src="quiz-ai.js?v=2"></script>
   <script>
     // =========================================================================
     // 1. INDEXED-DB ENGINE & PERSISTENT STATE (KHÔNG GIỚI HẠN DUNG LƯỢNG 5MB)
@@ -2623,6 +2624,7 @@
       aiFails: new Map()       // questionId -> số lần AI lỗi tạm thời
     };
     let aiConnectionVersion = 0;
+    let openAiSession = null;
 
     function getAiSettings() {
       let saved = {};
@@ -2671,7 +2673,7 @@
     }
 
     function aiCanReadImages(settings = getAiSettings()) {
-      return aiAvailable(settings) && settings.vision !== false && !extraction.aiNoVision;
+      return aiAvailable(settings) && (settings.provider === 'openai' || settings.vision !== false) && !extraction.aiNoVision;
     }
 
     function updateAiModeLabel() {
@@ -2685,9 +2687,12 @@
       const info = document.getElementById('scanEngineInfo');
       if (info) {
         if (usingAi) {
-          const model = settings.provider === 'gemini'
-            ? geminiState.active || (isAutoModel(settings.model) ? 'tự chọn model' : settings.model)
-            : settings.model;
+          let model = settings.model;
+          if (settings.provider === 'gemini') model = geminiState.active || model;
+          if (settings.provider === 'openai' && openAiSession && sameAiConnection(settings, openAiSession.settings)) {
+            model = openAiSession.active || model;
+          }
+          if (QuizAi.providers[settings.provider].autoModel && isAutoModel(model)) model = 'tự chọn model';
           const name = escapeHtml(QuizAi.providers[settings.provider].label + ' · ' + model);
           const mode = aiCanReadImages(settings)
             ? 'AI đọc ảnh câu hỏi, chat và giải thích.'
@@ -4042,16 +4047,39 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     async function requestAi(payload, settings) {
       assertAiConnection(settings);
       try {
-        const result = await (settings.provider === 'gemini' ? geminiRequest(payload, settings) : QuizAi.generate(settings, payload));
+        let result;
+        if (settings.provider === 'gemini') {
+          result = await geminiRequest(payload, settings);
+        } else if (settings.provider === 'openai') {
+          if (!openAiSession || openAiSession.settings.version !== settings.version || !sameAiConnection(openAiSession.settings, settings)) {
+            openAiSession = {
+              settings,
+              active: '',
+              run: QuizAi.createOpenAiFallback(settings, { assertCurrent: () => assertAiConnection(settings) })
+            };
+          }
+          const session = openAiSession;
+          result = await session.run(payload);
+          assertAiConnection(settings);
+          if (session.active !== result.__model) {
+            session.active = result.__model;
+            updateAiModeLabel();
+          }
+        } else {
+          result = await QuizAi.generate(settings, payload);
+        }
         assertAiConnection(settings);
         return result;
       } catch (err) {
         assertAiConnection(settings);
-        if (err.kind === 'vision') {
+        if (err.kind === 'vision' && (settings.provider !== 'openai' || err.retryAt === Infinity)) {
           extraction.aiNoVision = true;
           updateAiModeLabel();
         }
-        throw err instanceof AiError ? err : new AiError(err.message, err.kind || 'other');
+        if (err instanceof AiError) throw err;
+        const error = new AiError(err.message, err.kind || 'other');
+        error.retryAt = err.retryAt;
+        throw error;
       }
     }
 
@@ -4422,7 +4450,10 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (err?.kind === 'changed') return 'changed';
       console.warn('API AI lỗi:', err);
       if (err?.kind === 'vision') {
-        showToast('Model chỉ dùng được với văn bản. Đang chuyển sang OCR để đọc ảnh.', 'ph-warning');
+        if (Date.now() - extraction.lastAiToastAt > 15000) {
+          extraction.lastAiToastAt = Date.now();
+          showToast('Chưa có model phù hợp để đọc ảnh. Đang chuyển sang OCR.', 'ph-warning');
+        }
         return 'ocr';
       }
       if (err && (err.kind === 'fatal' || err.kind === 'model')) {
@@ -5378,14 +5409,14 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     function fillAiModelChoices(models) {
       aiModelChoices = new Map(models.map(model => [model.id, model]));
-      const gemini = aiProviderInput.value === 'gemini';
+      const { label, autoModel } = QuizAi.providers[aiProviderInput.value];
       aiModelList.replaceChildren(new Option('Chọn model từ danh sách', ''));
-      if (gemini) aiModelList.add(new Option('Tự chọn model (Gemini)', 'auto'));
+      if (autoModel) aiModelList.add(new Option('Tự chọn model (' + label + ')', 'auto'));
       for (const { id, vision } of models) {
         aiModelList.add(new Option(vision === true ? id + ' · hỗ trợ ảnh' : id, id));
       }
-      aiModelList.disabled = !gemini && models.length === 0;
-      aiModelList.value = aiModelChoices.has(aiModelInput.value) || (gemini && aiModelInput.value === 'auto')
+      aiModelList.disabled = !autoModel && models.length === 0;
+      aiModelList.value = aiModelChoices.has(aiModelInput.value) || (autoModel && aiModelInput.value === 'auto')
         ? aiModelInput.value : '';
     }
 
@@ -5393,6 +5424,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       aiFormRevision++;
       document.getElementById('aiTestResult').className = 'hidden';
       document.getElementById('aiBaseUrlField').classList.toggle('hidden', aiProviderInput.value !== 'custom');
+      document.getElementById('aiOpenAiFallbackHint').classList.toggle('hidden', aiProviderInput.value !== 'openai');
       const builtIn = aiProviderInput.value === 'gemini' && BUILT_IN_GEMINI_API_KEY.trim();
       aiKeyInput.placeholder = builtIn ? 'Đang dùng key cài sẵn' : 'Để trống để dùng OCR';
       fillAiModelChoices([]);
@@ -5418,7 +5450,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       const sameProvider = saved.provider === aiProviderInput.value;
       aiKeyInput.value = sameProvider ? saved.userKey : '';
       aiBaseUrlInput.value = sameProvider ? saved.baseUrl : '';
-      aiModelInput.value = sameProvider ? saved.model : (aiProviderInput.value === 'gemini' ? 'auto' : '');
+      aiModelInput.value = sameProvider ? saved.model : (QuizAi.providers[aiProviderInput.value].autoModel ? 'auto' : '');
       resetAiModelForm();
     });
     aiKeyInput.addEventListener('input', resetAiModelForm);
@@ -5438,7 +5470,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       aiFormRevision++;
       document.getElementById('aiTestResult').className = 'hidden';
       const model = aiModelInput.value.trim();
-      aiModelList.value = aiModelChoices.has(model) || (aiProviderInput.value === 'gemini' && model === 'auto') ? model : '';
+      aiModelList.value = aiModelChoices.has(model) || (QuizAi.providers[aiProviderInput.value].autoModel && model === 'auto') ? model : '';
     });
 
     async function runAiSettingsAction(message, action) {
@@ -5490,6 +5522,9 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
             if (index === candidates.length - 1 || err.kind === 'fatal' || err.kind === 'network') throw err;
           }
         }
+      } else if (settings.provider === 'openai') {
+        const result = await QuizAi.createOpenAiFallback(settings)(payload);
+        model = result.__model;
       } else {
         await QuizAi.generate(settings, payload);
       }
@@ -5512,6 +5547,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       // Đổi key/model → bật lại AI và cho phép thử lại các câu bị lỗi trước đó
       if (!sameAiConnection(now, prev) || now.vision !== prev.vision || extraction.aiDisabledReason || extraction.aiPausedUntil) {
         aiConnectionVersion++;
+        openAiSession = null;
         extraction.aiDisabledReason = '';
         extraction.aiNoVision = false;
         extraction.failed.clear();
