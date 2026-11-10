@@ -107,6 +107,9 @@
         <button id="navQuizBtn" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-1.5 bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-sm transition">
           <i class="ph-bold ph-play-circle"></i> <span>Làm Bài</span>
         </button>
+        <button id="navRandomExamBtn" type="button" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 transition" title="Tạo đề ngẫu nhiên">
+          <i class="ph-bold ph-shuffle"></i> <span>Tạo đề</span>
+        </button>
         <button id="navGalleryBtn" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 transition">
           <i class="ph-bold ph-folders"></i> <span class="hidden md:inline">Các Bộ Câu Hỏi</span> (<span id="navGalleryCount">0</span>)
         </button>
@@ -227,6 +230,7 @@
               <span id="qOptionStatusBadge" class="text-[11px] font-bold px-2.5 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
                 A–E
               </span>
+              <div id="qTopicBadges" class="flex flex-wrap gap-1"></div>
             </div>
 
             <div class="flex items-center gap-1.5">
@@ -370,10 +374,28 @@
               </div>
             </div>
 
+            <select id="paletteTopicSelect" aria-label="Lọc danh sách câu hỏi theo chủ đề" class="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs font-semibold"></select>
             <div id="qPaletteGrid" class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 custom-scrollbar"></div>
           </div>
         </div>
 
+      </div>
+    </section>
+
+    <section id="randomExamSection" class="hidden">
+      <div class="max-w-xl mx-auto bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-7 space-y-4 shadow-sm">
+        <div class="space-y-1">
+          <h2 class="text-xl font-extrabold flex items-center gap-2">
+            <i class="ph-bold ph-shuffle text-brand-500"></i> Tạo đề ngẫu nhiên
+          </h2>
+          <p class="text-sm text-slate-500 dark:text-slate-400">Lấy tối đa 50 câu từ các bộ câu hỏi gốc. Mỗi đề được lưu riêng trong Các Bộ Câu Hỏi.</p>
+        </div>
+        <div class="space-y-1.5">
+          <label for="randomExamTopicSelect" class="block text-sm font-bold">Chủ đề</label>
+          <select id="randomExamTopicSelect" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2.5 text-sm font-semibold"></select>
+          <p id="randomExamAvailability" role="status" class="text-xs text-slate-500 dark:text-slate-400"></p>
+        </div>
+        <button id="createRandomExamBtn" type="button" disabled class="px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-sm font-bold disabled:opacity-50"></button>
       </div>
     </section>
 
@@ -471,6 +493,7 @@
           </div>
         </div>
 
+        <select id="galleryTopicSelect" aria-label="Lọc bộ câu hỏi theo chủ đề" class="w-full sm:max-w-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold"></select>
         <div id="galleryGrid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
       </div>
     </section>
@@ -973,6 +996,7 @@
         return;
       }
       syncActiveSetToStore();
+      if (setId !== state.activeSetId) document.getElementById('paletteTopicSelect').value = 'all';
       state.activeSetId = setId;
       const target = state.sets[setId];
       state.questions = Array.isArray(target.questions) ? target.questions : [];
@@ -1432,6 +1456,7 @@
 
     // Sau khi AI đọc xong: ảnh nào được đánh dấu "phần tiếp theo" của ảnh trước (ảnh trước bị cắt dở) → gộp vào câu trước rồi đọc lại
     function mergeContinuationsInActiveSet() {
+      if (state.sets[state.activeSetId]?.randomExam) return false;
       const qs = state.questions;
       const cur = qs[state.currentIndex];
       let merged = 0;
@@ -1911,6 +1936,7 @@
       document.getElementById('qCurrentIdx').textContent = state.currentIndex + 1;
       document.getElementById('qTotalCount').textContent = state.questions.length;
       document.getElementById('qNumberBadge').textContent = `Câu ${state.currentIndex + 1}`;
+      document.getElementById('qTopicBadges').innerHTML = questionTopicBadges(QuizData.questionTopics(q));
 
       const statusBadge = document.getElementById('qOptionStatusBadge');
       const statusInfo = getOptionStatusLabel(q);
@@ -2046,6 +2072,30 @@
       document.getElementById('quizProgressFill').style.width = `${pct}%`;
     }
 
+    function questionTopicBadges(topics) {
+      return topics.map(id => `<span class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-violet-500/15 text-violet-700 dark:text-violet-300">${escapeHtml(QuizData.topicLabels[id])}</span>`).join('');
+    }
+
+    function renderTopicOptions(select, counts) {
+      const previous = select.value;
+      const options = Object.entries(QuizData.topicLabels)
+        .filter(([id]) => id === 'all' || id === previous || counts[id])
+        .map(([id, label]) => `<option value="${id}">${escapeHtml(label)} (${counts[id] || 0})</option>`).join('');
+      if (select.innerHTML !== options) {
+        select.innerHTML = options;
+        select.value = previous || 'all';
+      }
+      return select.value;
+    }
+
+    function renderListTopics(selectId, questions) {
+      const counts = { all: questions.length };
+      for (const question of questions) {
+        for (const topic of QuizData.questionTopics(question)) counts[topic] = (counts[topic] || 0) + 1;
+      }
+      return renderTopicOptions(document.getElementById(selectId), counts);
+    }
+
     function renderQuestionPalette() {
       const grid = document.getElementById('qPaletteGrid');
       if (!grid) return;
@@ -2055,8 +2105,10 @@
       const wrongBtn = document.getElementById('filterWrongQBtn');
       if (allBtn) allBtn.className = state.filterMode === 'wrong' ? idleCls : activeCls;
       if (wrongBtn) wrongBtn.className = state.filterMode === 'wrong' ? activeCls : idleCls;
+      const topic = renderListTopics('paletteTopicSelect', state.questions);
       grid.innerHTML = state.questions.map((q, idx) => {
         const ans = state.userAnswers[q.id];
+        if (topic !== 'all' && !QuizData.questionTopics(q).includes(topic)) return '';
         if (state.filterMode === 'wrong' && (!ans || ans.isCorrect)) {
           return '';
         }
@@ -2075,7 +2127,7 @@
             ${idx + 1}
           </button>
         `;
-      }).join('');
+      }).join('') || '<p class="text-xs text-slate-500">Không có câu hỏi phù hợp.</p>';
     }
 
     function jumpToQuestion(idx) {
@@ -2217,7 +2269,7 @@
               <button onclick="inspectSetQuestions('${id}')" class="py-2.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold flex items-center justify-center gap-1 transition" title="Xem danh sách câu hỏi trong bộ này">
                 <i class="ph-bold ph-list-bullets"></i> <span>Xem câu (${stats.total})</span>
               </button>
-              <button onclick="scanIntoSet('${id}')" class="py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold flex items-center justify-center gap-1 transition" title="Quét thêm file vào bộ câu hỏi này">
+              <button onclick="scanIntoSet('${id}')" class="${s.randomExam ? 'hidden' : 'flex'} py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold items-center justify-center gap-1 transition" title="Quét thêm file vào bộ câu hỏi này">
                 <i class="ph-bold ph-upload-simple"></i>
               </button>
             </div>
@@ -2240,6 +2292,7 @@
 
     function inspectSetQuestions(setId) {
       activateSet(setId, true);
+      if (state.inspectingSetId !== setId) document.getElementById('galleryTopicSelect').value = 'all';
       state.inspectingSetId = setId;
       renderSetsManager();
       const wrapper = document.getElementById('inspectedSetWrapper');
@@ -2317,6 +2370,7 @@
       wrapper.classList.remove('hidden');
       document.getElementById('inspectedSetName').textContent = targetSet.name;
       document.getElementById('galleryTotalBadge').textContent = targetSet.questions.length;
+      const topic = renderListTopics('galleryTopicSelect', targetSet.questions);
 
       if (targetSet.questions.length === 0) {
         grid.innerHTML = `
@@ -2329,6 +2383,8 @@
 
       grid.innerHTML = '';
       targetSet.questions.forEach((rawQ, idx) => {
+        const topics = QuizData.questionTopics(rawQ);
+        if (topic !== 'all' && !topics.includes(topic)) return;
         const q = ensureCompleteOptions(rawQ);
         const statusInfo = getOptionStatusLabel(q);
         const userAns = (targetSet.userAnswers || {})[q.id];
@@ -2356,6 +2412,7 @@
             <div class="flex items-center justify-between gap-2 flex-wrap">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="px-2.5 py-1 rounded-lg bg-brand-500/15 text-brand-400 font-extrabold text-xs">Câu ${idx + 1}</span>
+                ${questionTopicBadges(topics)}
                 <span class="px-2 py-0.5 rounded-lg text-[10px] font-bold ${statusInfo.cls}">${statusInfo.text}</span>
                 ${ansBadge}
               </div>
@@ -4761,6 +4818,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     // Nhóm theo (câu hỏi + đáp án đúng + bộ phương án gốc), trong nhóm so code gần đúng ≥ 95%
     function removeDuplicateQuestionsInActiveSet() {
+      if (state.sets[state.activeSetId]?.randomExam) return 0;
       const qs = state.questions;
       const current = qs[state.currentIndex];
       const groups = new Map();
@@ -4819,7 +4877,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     // Câu cũ (quét bằng bản trước) có đáp án tự điền kiểu "1010, Compile Error..." → làm lại cho hợp lý
     const preparedSetIds = new Set();
     function prepareActiveSetOnce() {
-      if (!state.activeSetId || preparedSetIds.has(state.activeSetId)) return;
+      if (!state.activeSetId || preparedSetIds.has(state.activeSetId) || state.sets[state.activeSetId]?.randomExam) return;
       preparedSetIds.add(state.activeSetId);
       let changed = splitMultiImageQuestionsInActiveSet();
       const useAi = aiCanReadImages();
@@ -5304,9 +5362,44 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     // =========================================================================
     // 9. NAVIGATION & EVENT LISTENERS
     // =========================================================================
+    function renderRandomExam() {
+      const bank = QuizData.buildQuestionBank(Object.values(state.sets));
+      const counts = Object.fromEntries([...bank].map(([topic, questions]) => [topic, questions.length]));
+      const topic = renderTopicOptions(document.getElementById('randomExamTopicSelect'), counts);
+      const candidates = bank.get(topic);
+      const size = Math.min(QuizData.randomExamSize, candidates.length);
+      const button = document.getElementById('createRandomExamBtn');
+      button.textContent = size ? `Tạo đề ${size} câu` : 'Tạo đề';
+      button.disabled = !size;
+      document.getElementById('randomExamAvailability').textContent = !size
+        ? (topic === 'all' ? 'Hãy thêm câu hỏi vào một bộ gốc để tạo đề.' : 'Chủ đề này hiện chưa có câu nào.')
+        : size < QuizData.randomExamSize
+          ? `Chỉ có ${size} câu trong phạm vi này. Đề sẽ lấy đủ ${size} câu.`
+          : `Có ${candidates.length} câu. Đề sẽ lấy ngẫu nhiên ${size} câu.`;
+      return { topic, candidates, size };
+    }
+
+    async function startRandomExam() {
+      if (document.getElementById('startScanBtn').disabled) {
+        showToast('Hãy đợi quét file xong rồi tạo đề.', 'ph-info');
+        return;
+      }
+      const { topic, candidates, size } = renderRandomExam();
+      if (!size) return;
+      const setId = createQuestionSet(`Đề ngẫu nhiên · ${QuizData.topicLabels[topic]} · ${size} câu`, [], false);
+      state.sets[setId].randomExam = true;
+      state.questions = QuizData.createRandomExam(candidates, setId);
+      state.inspectingSetId = null;
+      state.filterMode = 'all';
+      const saving = saveProgress();
+      switchView('quiz');
+      if (await saving) showToast(`Đã tạo đề ngẫu nhiên gồm ${size} câu.`, 'ph-check-circle');
+    }
+
     function switchView(view) {
       const views = {
         quiz: document.getElementById('quizSection'),
+        randomExam: document.getElementById('randomExamSection'),
         gallery: document.getElementById('gallerySection'),
         upload: document.getElementById('uploadSection'),
         result: document.getElementById('resultSection')
@@ -5319,6 +5412,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
       const navButtons = {
         quiz: document.getElementById('navQuizBtn'),
+        randomExam: document.getElementById('navRandomExamBtn'),
         gallery: document.getElementById('navGalleryBtn'),
         upload: document.getElementById('navUploadBtn')
       };
@@ -5333,11 +5427,25 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
       if (view === 'gallery') renderSetsManager();
       if (view === 'quiz') renderQuizQuestion();
-      if (view === 'upload') renderUploadedFilesList();
+      if (view === 'randomExam') renderRandomExam();
+      if (view === 'upload') {
+        const mode = document.getElementById('scanSaveModeSelect');
+        const append = mode.querySelector('option[value="append"]');
+        append.disabled = !!state.sets[state.activeSetId]?.randomExam;
+        if (append.disabled && mode.value === 'append') {
+          mode.value = 'new';
+          document.getElementById('scanSetNameBox').classList.remove('hidden');
+        }
+        renderUploadedFilesList();
+      }
     }
 
     document.getElementById('navQuizBtn').addEventListener('click', () => switchView('quiz'));
+    document.getElementById('navRandomExamBtn').addEventListener('click', () => switchView('randomExam'));
+    document.getElementById('randomExamTopicSelect').addEventListener('change', renderRandomExam);
+    document.getElementById('createRandomExamBtn').addEventListener('click', startRandomExam);
     document.getElementById('navGalleryBtn').addEventListener('click', () => switchView('gallery'));
+    document.getElementById('galleryTopicSelect').addEventListener('change', () => renderInspectedSetQuestions(state.inspectingSetId));
     document.getElementById('navUploadBtn').addEventListener('click', () => switchView('upload'));
     document.getElementById('startQuizFromGalleryBtn').addEventListener('click', () => switchView('quiz'));
     document.getElementById('closeInspectedSetBtn').addEventListener('click', () => {
@@ -5609,21 +5717,12 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     document.getElementById('shuffleQuestionsBtn').addEventListener('click', () => {
       if (state.questions.length === 0) return;
-      shuffleInPlace(state.questions);
+      QuizData.shuffleInPlace(state.questions);
       state.currentIndex = 0;
       saveProgress();
       renderQuizQuestion();
       showToast('Đã đảo thứ tự câu hỏi!', 'ph-shuffle');
     });
-
-    // Fisher–Yates: xáo đều (sort(() => Math.random() - 0.5) cho kết quả lệch)
-    function shuffleInPlace(arr) {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-      return arr;
-    }
 
     document.getElementById('shuffleOptionsBtn').addEventListener('click', () => {
       if (state.questions.length === 0) return;
@@ -5636,7 +5735,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
           correct: letter === q.correctLetter,
           picked: !!old && letter === old.selected
         }));
-        shuffleInPlace(entries);
+        QuizData.shuffleInPlace(entries);
         const newOpts = {};
         entries.forEach((e, i) => {
           const letter = OPTION_LETTERS[i];
@@ -5672,6 +5771,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       state.filterMode = 'wrong';
       renderQuestionPalette();
     });
+    document.getElementById('paletteTopicSelect').addEventListener('change', renderQuestionPalette);
 
     document.getElementById('editCurrentQBtn').addEventListener('click', () => {
       openEditModal(state.currentIndex);
@@ -5896,7 +5996,8 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
       try {
         const saveMode = document.getElementById('scanSaveModeSelect').value;
-        const appendMode = saveMode === 'append' && state.activeSetId && state.sets[state.activeSetId];
+        const currentSet = state.sets[state.activeSetId];
+        const appendMode = saveMode === 'append' && currentSet && !currentSet.randomExam;
         const extracted = [];
         const originals = [];
         let skippedDuplicates = 0;
@@ -6475,7 +6576,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       else renderQuizQuestion();
     });
   </script>
-  <script src="quiz-data.js?v=2"></script>
+  <script src="quiz-data.js?v=3"></script>
   <script src="quiz-sync.js?v=3"></script>
 </body>
 </html>

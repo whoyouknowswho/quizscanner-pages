@@ -189,7 +189,105 @@ const QuizData = (() => {
     };
   }
 
-  return { mimeType, createBackup, readBackup, inspectBackup, mergeBackups, createQuizStore };
+  const topicRules = [
+    ['inheritance', 'Kế thừa', /\b(ke thua|inheritance|base class|derived class|lop co so|lop dan xuat|lop cha|lop con)\b/, /\b(?:class|struct)\s+\w+(?:\s+final)?\s*:(?!:)/],
+    ['polymorphism', 'Đa hình', /\b(da hinh|polymorphism|virtual|ham ao|ham thuan ao|ghi de|override|abstract class|lop truu tuong|dynamic binding|lien ket dong)\b/, /\b(?:override|dynamic_cast|typeid)\b|\bvirtual\s+(?!public\b|protected\b|private\b)[^;{}]*?\(/],
+    ['templates', 'Template', /\b(templates?|typename|lap trinh tong quat|ham mau|lop mau)\b/, /\btemplate\s*<|\btypename\b/],
+    ['exceptions', 'Ngoại lệ (Exception)', /\b(ngoai le|exceptions?|exception handling)\b/, /\btry\s*\{|\bcatch\s*\(|\bthrow\b|\b(?:noexcept|exception|runtime_error|logic_error)\b/],
+    ['constructors', 'Constructor & Destructor', /\b(constructors?|destructors?|ham khoi tao|ham huy|sao chep doi tuong)\b/, /~\s*\w+\s*\(|\b(\w+)\s*::\s*\1\s*\(/],
+    ['operators', 'Nạp chồng toán tử', /\b(nap chong toan tu|qua tai toan tu|operator overloading)\b/, /\boperator\s*(?:[+\-*/%<>=!&|^~,[\]()]|\b(?:bool|int|new|delete)\b)/],
+    ['classes', 'Lớp & đối tượng', /\b(dong goi|encapsulation|access modifiers?|friend|thanh vien tinh|thanh vien rieng|doi tuong|lop va doi tuong|class and object|class members?)\b/, /\b(?:friend|this)\b/],
+    ['memory', 'Con trỏ & bộ nhớ', /\b(con tro|bo nho|cap phat dong|tham chieu|pointers?|memory management|dangling reference|smart pointers?)\b/, /\b(?:new|delete|nullptr|malloc|calloc|free|unique_ptr|shared_ptr|weak_ptr)\b/],
+    ['stl', 'STL & thư viện chuẩn', /\b(stl|thu vien chuan|standard library|iterators?|containers?)\b/, /#\s*include\s*<(?:vector|array|list|deque|map|unordered_map|set|unordered_set|stack|queue|algorithm|iterator|numeric)>|\bstd\s*::\s*(?:vector|array|list|deque|map|unordered_map|set|unordered_set|stack|queue|sort|find|accumulate)\b/]
+  ];
+  const topicLabels = Object.fromEntries([
+    ['all', 'Tất cả câu hỏi'],
+    ...topicRules.map(([id, label]) => [id, label]),
+    ['basics', 'Cú pháp & kiến thức cơ bản'],
+    ['unclassified', 'Chưa phân loại']
+  ]);
+  const topicCache = new WeakMap();
+
+  function questionTopics(question) {
+    const { prompt, code, blocks } = question;
+    const cached = topicCache.get(question);
+    if (cached && cached.prompt === prompt && cached.code === code && cached.blocks === blocks) return cached.topics;
+
+    const parts = Array.isArray(blocks) ? blocks : [];
+    const text = [prompt, ...parts.filter(part => part?.type === 'text').map(part => part.content)].filter(Boolean).join('\n');
+    const wording = text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/đ/g, 'd');
+    const codeText = [code, ...parts.filter(part => part?.type === 'code').map(part => part.content)].filter(Boolean).join('\n');
+    const source = (codeText || text).replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, ' ');
+    const className = source.match(/\b(?:class|struct)\s+(\w+)(?:\s+final)?\s*[:{]/)?.[1];
+    const hasConstructor = className && new RegExp('\\b' + className + '\\s*\\(').test(source);
+    const topics = topicRules.filter(([id, , words, syntax]) =>
+      words.test(wording) || syntax.test(source) || (id === 'constructors' && hasConstructor)
+    ).map(([id]) => id);
+    if (!topics.length) {
+      const genericPrompt = /^(?:(?:ket qua thuc hien doan chuong trinh sau la gi|chon dap an dung)[.?!\s]*)*$/;
+      if (className) topics.push('classes');
+      else topics.push(source.trim() && (codeText || !genericPrompt.test(wording.trim())) ? 'basics' : 'unclassified');
+    }
+    topicCache.set(question, { prompt, code, blocks, topics });
+    return topics;
+  }
+
+  function buildQuestionBank(sets) {
+    const bank = new Map(Object.keys(topicLabels).map(id => [id, []]));
+    const seen = new Set();
+    for (const set of sets) {
+      if (set.randomExam) continue;
+      const questions = [...(set.questions || []), ...(set.allQuestionsBackup || [])];
+      for (const question of questions) {
+        const key = bankQuestionKey(question);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        bank.get('all').push(question);
+        for (const topic of questionTopics(question)) bank.get(topic).push(question);
+      }
+    }
+    return bank;
+  }
+
+  function bankQuestionKey(question) {
+    if (question.imageHash) return 'scan:' + question.imageHash;
+    if (question.images?.length) return 'scan:' + JSON.stringify([question.images, question.multiQuestionOrdinal]);
+    const normalize = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const prompt = normalize(question.prompt);
+    const code = String(question.code ?? '').replace(/\r\n/g, '\n').trim();
+    const blocks = !prompt && !code && Array.isArray(question.blocks)
+      ? question.blocks.map(block => [block?.type, block?.content]) : null;
+    const options = Object.values(question.options || {}).map(normalize).sort();
+    const answer = normalize(question.options?.[question.correctLetter] ?? question.shortAnswer);
+    return JSON.stringify([prompt, code, blocks, options, answer]);
+  }
+
+  // Fisher–Yates, shared by regular shuffling and drawing questions without replacement.
+  function shuffleInPlace(items, random = Math.random) {
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    return items;
+  }
+
+  const randomExamSize = 50;
+  function createRandomExam(questions, setId, random = Math.random) {
+    return shuffleInPlace(questions.slice(), random).slice(0, randomExamSize).map((source, index) => {
+      const { chat, ...content } = source;
+      const question = structuredClone(content);
+      question.id = setId + '-q' + (index + 1);
+      // OCR can update the transcription of an exam question without splitting the draw.
+      question.needsGrouping = false;
+      question.multiQuestionSplitDone = true;
+      return question;
+    });
+  }
+
+  return {
+    mimeType, createBackup, readBackup, inspectBackup, mergeBackups, createQuizStore,
+    topicLabels, questionTopics, buildQuestionBank, randomExamSize, createRandomExam, shuffleInPlace
+  };
 })();
 
 if (typeof module !== 'undefined') module.exports = QuizData;
