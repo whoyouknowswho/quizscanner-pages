@@ -2132,8 +2132,8 @@
       }
       if (!waitForOcr) maybeAutoExplain(q);
 
-      document.getElementById('prevQBtn').disabled = state.currentIndex === 0;
-      document.getElementById('nextQBtn').disabled = state.currentIndex === state.questions.length - 1;
+      document.getElementById('prevQBtn').disabled = neighbourQuestionIndex(-1) < 0;
+      document.getElementById('nextQBtn').disabled = neighbourQuestionIndex(1) < 0;
 
       updateScoreBoard(examPending);
       renderQuestionPalette();
@@ -2214,13 +2214,10 @@
         wrongBtn.className = filterWrong ? activeCls : idleCls;
         wrongBtn.classList.toggle('hidden', examPending);
       }
-      const topic = renderListTopics('paletteTopicSelect', state.questions);
+      renderListTopics('paletteTopicSelect', state.questions);
       grid.innerHTML = state.questions.map((q, idx) => {
         const ans = state.userAnswers[q.id];
-        if (topic !== 'all' && !QuizData.questionTopics(q).includes(topic)) return '';
-        if (filterWrong && (!ans || ans.isCorrect)) {
-          return '';
-        }
+        if (!questionInList(q)) return '';
         let cls = 'bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700';
         if (ans) {
           cls = examPending ? 'bg-brand-500/20 text-brand-500 border-brand-500/40' : ans.isCorrect
@@ -2237,6 +2234,28 @@
           </button>
         `;
       }).join('') || '<p class="text-xs text-slate-500">Không có câu hỏi phù hợp.</p>';
+    }
+
+    // Câu có nằm trong danh sách đang lọc (chủ đề đang chọn, chế độ "câu sai") hay không
+    function questionInList(q) {
+      const topic = document.getElementById('paletteTopicSelect').value || 'all';
+      if (topic !== 'all' && !QuizData.questionTopics(q).includes(topic)) return false;
+      const filterWrong = state.filterMode === 'wrong' && !QuizData.isExamPending(state.sets[state.activeSetId]);
+      const ans = state.userAnswers[q.id];
+      return !filterWrong || (!!ans && !ans.isCorrect);
+    }
+
+    // Vị trí câu kế tiếp (step = 1) hoặc câu trước (step = -1) trong danh sách đang lọc; -1 nếu không còn
+    function neighbourQuestionIndex(step, from = state.currentIndex) {
+      for (let i = from + step; i >= 0 && i < state.questions.length; i += step) {
+        if (questionInList(state.questions[i])) return i;
+      }
+      return -1;
+    }
+
+    function goToNeighbourQuestion(step) {
+      const idx = neighbourQuestionIndex(step);
+      if (idx >= 0) jumpToQuestion(idx);
     }
 
     function jumpToQuestion(idx) {
@@ -5723,21 +5742,9 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       document.documentElement.classList.toggle('dark');
     });
 
-    document.getElementById('prevQBtn').addEventListener('click', () => {
-      if (state.currentIndex > 0) {
-        state.currentIndex--;
-        persistProgressSoon();
-        renderQuizQuestion();
-      }
-    });
-
-    document.getElementById('nextQBtn').addEventListener('click', () => {
-      if (state.currentIndex < state.questions.length - 1) {
-        state.currentIndex++;
-        persistProgressSoon();
-        renderQuizQuestion();
-      }
-    });
+    // Câu trước / câu tiếp theo đi trong danh sách đang lọc theo chủ đề
+    document.getElementById('prevQBtn').addEventListener('click', () => goToNeighbourQuestion(-1));
+    document.getElementById('nextQBtn').addEventListener('click', () => goToNeighbourQuestion(1));
 
     document.getElementById('toggleOrigImgBtn').addEventListener('click', () => {
       state.showOriginalImg = !state.showOriginalImg;
@@ -6161,7 +6168,13 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       state.filterMode = 'wrong';
       renderQuestionPalette();
     });
-    document.getElementById('paletteTopicSelect').addEventListener('change', renderQuestionPalette);
+    // Chọn chủ đề: nếu câu đang xem không thuộc chủ đề đó thì nhảy tới câu đầu tiên của chủ đề
+    document.getElementById('paletteTopicSelect').addEventListener('change', () => {
+      const current = state.questions[state.currentIndex];
+      const first = current && questionInList(current) ? -1 : neighbourQuestionIndex(1, -1);
+      if (first >= 0) jumpToQuestion(first);
+      else renderQuizQuestion();
+    });
 
     document.getElementById('editCurrentQBtn').addEventListener('click', () => {
       openEditModal(state.currentIndex);
@@ -6683,14 +6696,10 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       } else if (/^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1;
         if (choices[idx]) selectOption(choices[idx].key);
-      } else if (e.key === 'ArrowRight' && state.currentIndex < state.questions.length - 1) {
-        state.currentIndex++;
-        persistProgressSoon();
-        renderQuizQuestion();
-      } else if (e.key === 'ArrowLeft' && state.currentIndex > 0) {
-        state.currentIndex--;
-        persistProgressSoon();
-        renderQuizQuestion();
+      } else if (e.key === 'ArrowRight') {
+        goToNeighbourQuestion(1);
+      } else if (e.key === 'ArrowLeft') {
+        goToNeighbourQuestion(-1);
       }
     });
 
