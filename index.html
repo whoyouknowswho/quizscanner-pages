@@ -77,15 +77,21 @@
     .md-inline { font-family: 'JetBrains Mono', monospace; font-size: 0.92em; background: rgba(148, 163, 184, 0.2); padding: 0 0.3rem; border-radius: 0.35rem; }
     .md-h { font-weight: 800; color: #a5b4fc; margin-top: 0.6rem; }
     .md-h:first-child { margin-top: 0; }
+    /* Bảng chạy C++ mở ở bên trái để không che cột đáp án */
     #cppRunnerDialog {
-      inset: 0 0 0 auto;
+      inset: 0 auto 0 0;
       margin: 0;
+      padding: 0;
       height: 100dvh;
       max-height: none;
-      width: min(100vw, 34rem);
+      width: min(100vw, 44rem);
       max-width: none;
     }
-    #cppRunnerDialog::backdrop { background: rgba(3, 7, 18, 0.42); }
+    @media (min-width: 1024px) {
+      #cppRunnerDialog { width: min(56vw, 46rem); }
+    }
+    #cppRunnerDialog::backdrop { background: rgba(3, 7, 18, 0.28); }
+    #cppRunnerDialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
 </head>
 <body class="min-h-full bg-slate-50 dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
@@ -298,11 +304,6 @@
 
         <!-- Right 5 Cols: Full Multiple Choice Options & Explanation -->
         <div class="lg:col-span-5 min-w-0 space-y-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto custom-scrollbar lg:pr-1">
-          <div id="cppRunnerAction" class="hidden text-right">
-            <button id="openCppRunnerBtn" type="button" aria-haspopup="dialog" class="px-3.5 py-2 rounded-xl border border-brand-500/30 bg-brand-500/10 text-brand-600 dark:text-brand-300 text-xs font-bold hover:bg-brand-500/20">
-              <i class="ph-bold ph-terminal-window"></i> Chạy C++
-            </button>
-          </div>
           <div class="bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
             <div class="flex items-center justify-between gap-2 flex-wrap">
               <span id="qOptionsHeaderLabel" class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Chọn đáp án đúng</span>
@@ -801,32 +802,36 @@
     </div>
   </div>
 
-  <dialog id="cppRunnerDialog" aria-labelledby="cppRunnerTitle" class="bg-white dark:bg-[#131b2e] text-slate-900 dark:text-slate-100 border-l border-slate-200 dark:border-slate-800 shadow-2xl">
-    <div class="p-5 sm:p-6 space-y-4">
+  <dialog id="cppRunnerDialog" aria-labelledby="cppRunnerTitle" class="bg-white dark:bg-[#131b2e] text-slate-900 dark:text-slate-100 border-r border-slate-200 dark:border-slate-800 shadow-2xl">
+    <div class="h-full flex flex-col gap-3 p-4 sm:p-5">
       <div class="flex items-start justify-between gap-4">
-        <div>
+        <div class="min-w-0">
           <h2 id="cppRunnerTitle" class="font-extrabold text-lg">Chạy chương trình C++</h2>
           <p id="cppRunnerQuestion" class="text-xs text-slate-500 dark:text-slate-400"></p>
         </div>
-        <form method="dialog">
-          <button type="submit" class="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold">Đóng</button>
-        </form>
+        <button id="closeCppRunnerBtn" type="button" class="shrink-0 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800">
+          <i class="ph-bold ph-x"></i> Đóng
+        </button>
       </div>
-      <div id="cppRunnerSetup" class="space-y-2 text-xs text-slate-500 dark:text-slate-400">
-        <p>Giải nén và mở <strong>Start-Cpp-Runner.cmd</strong> trên Windows. Nếu trình duyệt hỏi, cho phép QuizScanner kết nối với ứng dụng trên máy.</p>
-        <div class="flex flex-wrap gap-4">
-          <a class="text-brand-600 dark:text-brand-300 underline" href="https://whoyouknowswho.github.io/quizscanner-pages/quiz-cpp-runner.zip?v=2" download>Tải C++ Runner</a>
-          <button id="connectCppRunnerBtn" type="button" class="font-bold text-brand-600 dark:text-brand-300 underline">Kết nối lại</button>
-          <button id="openCppWindowBtn" type="button" class="font-bold text-brand-600 dark:text-brand-300 underline">Mở cửa sổ chạy riêng</button>
-        </div>
-        <p id="cppRunnerConnectionStatus" role="status"></p>
+      <div class="flex flex-wrap items-center gap-2">
+        <label id="cppProgramPicker" class="hidden text-xs font-bold text-slate-500 dark:text-slate-400">Chương trình
+          <select id="cppProgramSelect" class="ml-1 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"></select>
+        </label>
+        <button id="cppRunAgainBtn" type="button" class="px-3.5 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white text-xs font-bold">
+          <i class="ph-bold ph-play"></i> Chạy lại
+        </button>
+        <span id="cppRunnerCompiler" class="text-[11px] text-slate-400"></span>
       </div>
-      <iframe id="cppRunnerFrame" title="C++ Runner trên máy này" allow="loopback-network" referrerpolicy="no-referrer" class="w-full h-[75dvh] rounded-xl border border-slate-200 dark:border-slate-800"></iframe>
+      <details open class="min-h-0 shrink rounded-xl border border-slate-800 bg-[#0b0e17] overflow-hidden flex flex-col">
+        <summary class="px-3 py-1.5 bg-[#111625] text-xs font-bold text-slate-400 cursor-pointer select-none">main.cpp</summary>
+        <div id="cppRunnerSource" class="p-3 overflow-auto custom-scrollbar max-h-[34dvh] font-mono text-xs leading-relaxed text-slate-100"></div>
+      </details>
+      <div id="cppRunnerResult" class="min-h-0 flex-1 overflow-y-auto custom-scrollbar space-y-2" role="status" aria-live="polite"></div>
     </div>
   </dialog>
 
   <script src="quiz-ai.js?v=2"></script>
-  <script src="quiz-cpp.js?v=1"></script>
+  <script src="quiz-cpp.js?v=2"></script>
   <script>
     // =========================================================================
     // 1. INDEXED-DB ENGINE & PERSISTENT STATE (KHÔNG GIỚI HẠN DUNG LƯỢNG 5MB)
@@ -1396,8 +1401,12 @@
       return cleanCodeBlocks(blocks);
     }
 
-    function codeCardHtml(code, blockIdx, codeNo, gen = []) {
+    function codeCardHtml(code, blockIdx, codeNo, gen = [], runIndex = -1) {
       const genSet = new Set(gen || []);
+      const runButton = runIndex < 0 ? '' : `
+            <button type="button" onclick="openCppRunner(${runIndex})" aria-haspopup="dialog" class="text-emerald-300 hover:text-white flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/30 transition">
+              <i class="ph-bold ph-play"></i> Chạy C++
+            </button>`;
       const rows = String(code).split('\n').map((line, i) => `
         <tr class="hover:bg-slate-800/40${genSet.has(i + 1) ? ' cpp-gen' : ''}"${genSet.has(i + 1) ? ' title="Dòng AI tái tạo (không có trong ảnh)"' : ''}>
           <td class="select-none pr-4 text-right text-slate-600 w-8 align-top">${i + 1}</td>
@@ -1413,9 +1422,11 @@
               <span class="font-mono font-bold text-brand-400 ml-1">${codeNo === 0 ? 'main.cpp' : 'C++'}</span>
               ${genSet.size ? `<span class="ml-2 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 font-bold text-[10px]">${genSet.size} dòng AI tái tạo</span>` : ''}
             </div>
-            <button type="button" onclick="copyCodeBlock(${blockIdx})" class="hover:text-white flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition">
-              <i class="ph-bold ph-copy"></i> Copy Code
-            </button>
+            <div class="flex items-center gap-1.5">${runButton}
+              <button type="button" onclick="copyCodeBlock(${blockIdx})" class="hover:text-white flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition">
+                <i class="ph-bold ph-copy"></i> Copy Code
+              </button>
+            </div>
           </div>
           <div class="p-4 overflow-x-auto custom-scrollbar">
             <table class="w-full border-collapse font-mono text-xs sm:text-[13px] leading-relaxed"><tbody>${rows}</tbody></table>
@@ -1429,11 +1440,16 @@
       if (!host) return;
       const blocks = getQuestionBlocks(q);
       activeCppPrograms = typeof QuizCpp === 'undefined' ? [] : QuizCpp.completePrograms(blocks);
-      document.getElementById('cppRunnerAction').classList.toggle('hidden', activeCppPrograms.length === 0);
+      // Nút Chạy nằm trên khối code là chương trình; nếu chương trình ghép từ nhiều khối thì nằm ở khối đầu tiên
+      const runIndexOf = b => activeCppPrograms.indexOf(String(b.content).trim());
+      const ownsProgram = blocks.some(b => b.type === 'code' && runIndexOf(b) >= 0);
       let codeNo = 0;
       let textNo = 0;
       host.innerHTML = blocks.map((b, idx) => {
-        if (b.type === 'code') return codeCardHtml(b.content, idx, codeNo++, b.gen);
+        if (b.type === 'code') {
+          const runIndex = ownsProgram ? runIndexOf(b) : (codeNo === 0 && activeCppPrograms.length ? 0 : -1);
+          return codeCardHtml(b.content, idx, codeNo++, b.gen, runIndex);
+        }
         const cls = textNo++ === 0
           ? 'font-bold text-sm sm:text-base text-slate-800 dark:text-slate-100'
           : 'font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300';
@@ -6246,53 +6262,115 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     document.getElementById('startScanBtn').addEventListener('click', () => runScanFiles(true));
 
+    // Chạy C++: gửi mã tới Compiler Explorer (godbolt.org), không cần cài hay kết nối gì trên máy
     const cppDialog = document.getElementById('cppRunnerDialog');
-    const cppRunnerFrame = document.getElementById('cppRunnerFrame');
-    const cppRunnerSetup = document.getElementById('cppRunnerSetup');
-    const cppRunnerConnectionStatus = document.getElementById('cppRunnerConnectionStatus');
-    const cppRunnerOrigin = 'http://127.0.0.1:43190';
+    const cppProgramSelect = document.getElementById('cppProgramSelect');
+    const cppRunAgainBtn = document.getElementById('cppRunAgainBtn');
+    const cppRunnerResult = document.getElementById('cppRunnerResult');
+    const cppResultCache = new Map();
     let cppDialogPrograms = [];
-    let cppRunnerWindow = null;
-    let cppPopupPrograms = [];
+    let cppRunToken = 0;
+    let cppRunController = null;
 
-    function cppRunnerPanelUrl() {
-      const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
-      return cppRunnerOrigin + '/panel?theme=' + theme;
+    function cppPanelHtml(title, text, tone) {
+      const tones = {
+        error: 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+        warn: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+        plain: 'border-slate-800 bg-[#0b0e17] text-slate-100'
+      };
+      return `<div>
+        <div class="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">${escapeHtml(title)}</div>
+        <pre class="m-0 p-3 rounded-xl border font-mono text-xs leading-relaxed max-h-[40dvh] overflow-auto custom-scrollbar ${tones[tone]}">${escapeHtml(text)}</pre>
+      </div>`;
     }
 
-    function connectCppRunner() {
-      cppRunnerSetup.classList.remove('hidden');
-      cppRunnerConnectionStatus.textContent = '';
-      cppRunnerFrame.src = cppRunnerPanelUrl();
-    }
-
-    document.getElementById('openCppRunnerBtn').addEventListener('click', () => {
-      if (!activeCppPrograms.length || cppDialog.open) return;
-      cppDialogPrograms = activeCppPrograms.slice();
-      document.getElementById('cppRunnerQuestion').textContent = `Câu ${state.currentIndex + 1} · TDM-GCC 9.2.0 64-bit`;
-      cppDialog.showModal();
-      connectCppRunner();
-    });
-    document.getElementById('connectCppRunnerBtn').addEventListener('click', connectCppRunner);
-    document.getElementById('openCppWindowBtn').addEventListener('click', () => {
-      cppPopupPrograms = cppDialogPrograms.slice();
-      const left = Math.max(0, screen.availWidth - 560);
-      cppRunnerWindow = window.open(cppRunnerPanelUrl(), 'quizscannerCppRunner', 'popup,width=540,height=720,left=' + left + ',top=20');
-      cppRunnerConnectionStatus.textContent = cppRunnerWindow
-        ? 'Đã mở cửa sổ chạy C++.'
-        : 'Trình duyệt đang chặn cửa sổ mới. Hãy cho phép mở cửa sổ từ QuizScanner.';
-    });
-    cppDialog.addEventListener('close', () => { cppRunnerFrame.removeAttribute('src'); });
-    cppRunnerFrame.addEventListener('load', () => {
-      if (cppDialog.open) cppRunnerFrame.contentWindow.postMessage({ type: 'quiz-cpp-programs', programs: cppDialogPrograms }, cppRunnerOrigin);
-    });
-    window.addEventListener('message', event => {
-      if (event.origin !== cppRunnerOrigin) return;
-      if (event.source === cppRunnerWindow && event.data === 'quiz-cpp-popup-ready') {
-        event.source.postMessage({ type: 'quiz-cpp-programs', programs: cppPopupPrograms }, cppRunnerOrigin);
-      } else if (cppDialog.open && event.source === cppRunnerFrame.contentWindow && event.data === 'quiz-cpp-ready') {
-        cppRunnerSetup.classList.add('hidden');
+    function renderCppResult(r) {
+      const tone = { ok: 'ok', exit: 'warn', timeout: 'error', runtime: 'error', compile: 'error', failed: 'error', network: 'error' }[r.kind] || 'error';
+      const banner = {
+        ok: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+        warn: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+        error: 'border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+      }[tone];
+      const icon = { ok: 'ph-check-circle', warn: 'ph-warning', error: 'ph-x-circle' }[tone];
+      const time = r.kind === 'ok' && r.execTime ? ` · ${r.execTime} ms` : '';
+      let html = `<div class="p-3 rounded-xl border ${banner}">
+        <div class="font-extrabold text-sm flex items-center gap-1.5"><i class="ph-bold ${icon}"></i>${escapeHtml(r.title)}</div>
+        <div class="text-xs mt-0.5">${escapeHtml(r.detail + time)}</div>
+      </div>`;
+      if (r.errors) html += cppPanelHtml('Thông báo của trình biên dịch', r.errors, 'error');
+      if (r.kind !== 'compile' && r.kind !== 'network' && r.kind !== 'failed') {
+        const out = (r.stdout || '(Chương trình không in ra gì.)') + (r.truncated ? '\n[Kết quả quá dài nên đã được rút gọn.]' : '');
+        html += cppPanelHtml('Kết quả in ra (stdout)', out, 'plain');
       }
+      if (r.stderr) html += cppPanelHtml('Thông báo lỗi (stderr)', r.stderr, 'error');
+      if (r.warnings) html += cppPanelHtml('Cảnh báo khi biên dịch', r.warnings, 'warn');
+      cppRunnerResult.innerHTML = html;
+    }
+
+    async function runCppProgram(force = false) {
+      const code = cppDialogPrograms[Number(cppProgramSelect.value)] || '';
+      if (!code) return;
+      const token = ++cppRunToken;
+      cppRunController?.abort();
+      cppRunController = new AbortController();
+      const signal = AbortSignal.any([cppRunController.signal, AbortSignal.timeout(60000)]);
+      cppRunAgainBtn.disabled = true;
+      cppRunnerResult.innerHTML = `<div class="p-3 rounded-xl border border-brand-500/30 bg-brand-500/10 text-brand-700 dark:text-brand-400 text-sm font-bold flex items-center gap-2">
+        <i class="ph-bold ph-spinner animate-spin"></i> Đang biên dịch và chạy…</div>`;
+      try {
+        let result = !force && cppResultCache.get(code);
+        if (!result) {
+          result = await QuizCpp.runProgram(code, { signal });
+          if (result.kind !== 'network') cppResultCache.set(code, result);
+        }
+        if (token === cppRunToken) renderCppResult(result);
+      } catch (error) {
+        if (token !== cppRunToken) return;
+        renderCppResult(error?.name === 'TimeoutError'
+          ? { kind: 'network', title: 'Máy chủ biên dịch phản hồi quá lâu', detail: 'Bấm Chạy lại để thử lần nữa.' }
+          : { kind: 'network', title: 'Đã dừng chạy chương trình', detail: 'Bấm Chạy lại để chạy lần nữa.' });
+      } finally {
+        if (token === cppRunToken) cppRunAgainBtn.disabled = false;
+      }
+    }
+
+    function showCppSource() {
+      const code = cppDialogPrograms[Number(cppProgramSelect.value)] || '';
+      document.getElementById('cppRunnerSource').innerHTML = code.split('\n').map((line, i) =>
+        `<div class="flex"><span class="select-none w-8 shrink-0 pr-3 text-right text-slate-600">${i + 1}</span><span class="whitespace-pre-wrap break-all">${highlightCppCode(line) || ' '}</span></div>`).join('');
+    }
+
+    function openCppRunner(index = 0) {
+      if (!activeCppPrograms.length || typeof QuizCpp === 'undefined') return;
+      cppDialogPrograms = activeCppPrograms.slice();
+      cppProgramSelect.replaceChildren(...cppDialogPrograms.map((_, i) => new Option('Chương trình ' + (i + 1), i)));
+      cppProgramSelect.value = String(Math.min(Math.max(0, index), cppDialogPrograms.length - 1));
+      document.getElementById('cppProgramPicker').classList.toggle('hidden', cppDialogPrograms.length < 2);
+      document.getElementById('cppRunnerQuestion').textContent = `Câu ${state.currentIndex + 1}`;
+      document.getElementById('cppRunnerCompiler').textContent = QuizCpp.compilerLabel + ' · godbolt.org';
+      showCppSource();
+      if (!cppDialog.open) cppDialog.showModal();
+      runCppProgram();
+    }
+
+    cppProgramSelect.addEventListener('change', () => { showCppSource(); runCppProgram(); });
+    cppRunAgainBtn.addEventListener('click', () => runCppProgram(true));
+    document.getElementById('closeCppRunnerBtn').addEventListener('click', () => cppDialog.close());
+    // Bấm chuột trái ra ngoài bảng (vào nền mờ) thì đóng
+    const cppOutside = e => {
+      const r = cppDialog.getBoundingClientRect();
+      return e.target === cppDialog && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+    };
+    let cppPressOutside = false;
+    cppDialog.addEventListener('pointerdown', e => { cppPressOutside = e.button === 0 && cppOutside(e); });
+    cppDialog.addEventListener('click', e => {
+      if (cppPressOutside && cppOutside(e)) cppDialog.close();
+      cppPressOutside = false;
+    });
+    cppDialog.addEventListener('close', () => {
+      cppRunToken++;
+      cppRunController?.abort();
+      cppRunAgainBtn.disabled = false;
     });
 
     // Keyboard shortcuts A-J & 1-8 & Left/Right arrows
