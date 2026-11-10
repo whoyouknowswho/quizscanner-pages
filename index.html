@@ -4053,28 +4053,34 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       return !!b && b.until > Date.now();
     }
 
-    function geminiConfigFor(model, payload, noThinkingConfig) {
+    // quick = gọi thử để kiểm tra model: suy nghĩ ít nhất có thể để trả lời trong vài giây
+    function geminiConfigFor(model, payload, noThinkingConfig, quick = false) {
       const body = JSON.parse(JSON.stringify(payload));
       body.generationConfig = body.generationConfig || {};
       if (/^gemini-3/.test(model)) {
-        // Gemini 3: Google khuyên giữ temperature mặc định; suy nghĩ ở mức thấp cho nhanh
+        // Gemini 3: Google khuyên giữ temperature mặc định
         delete body.generationConfig.temperature;
-        if (!noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: /pro/.test(model) ? 'high' : 'medium' };
+        if (!noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: quick ? 'low' : /pro/.test(model) ? 'high' : 'medium' };
+      } else if (quick && !noThinkingConfig && /^gemini-2\.5/.test(model)) {
+        // 2.5 Flash/Lite tắt được suy nghĩ; 2.5 Pro cần tối thiểu 128 token
+        body.generationConfig.thinkingConfig = { thinkingBudget: /pro/.test(model) ? 128 : 0 };
       }
       return body;
     }
 
+    const GEMINI_PING = { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 256 } };
+
     // Gọi 1 model (có thử lại khi lỗi mạng / quá tải ngắn). Ném AiError đã phân loại nếu thất bại.
-    async function callGeminiModel(model, payload, settings, attempts = 3) {
+    async function callGeminiModel(model, payload, settings, attempts = 3, quick = false) {
       const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`;
       const isPro = /pro/.test(model);
       let delay = 2000;
       let noThinkingConfig = settings.version !== undefined && geminiState.noThinkingConfig;
       for (let attempt = 0; attempt < attempts; attempt++) {
         assertAiConnection(settings);
-        const body = geminiConfigFor(model, payload, noThinkingConfig);
+        const body = geminiConfigFor(model, payload, noThinkingConfig, quick);
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), isPro ? 240000 : 120000);
+        const timer = setTimeout(() => controller.abort(), quick ? 25000 : isPro ? 240000 : 120000);
         let res;
         try {
           res = await fetch(url, {
@@ -4137,7 +4143,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
           if (modelBlockedNow(m)) continue;
           if (!geminiState.verified.has(m)) {
             try {
-              await callGeminiModel(m, { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 64 } }, settings, 2);
+              await callGeminiModel(m, GEMINI_PING, settings, 2, true);
               assertAiConnection(settings);
               geminiState.verified.add(m);
             } catch (err) {
@@ -5728,6 +5734,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       };
     }));
 
+    let lastGeminiTest = null;
     aiTestBtn.addEventListener('click', () => runAiSettingsAction('Đang kiểm tra model…', async settings => {
       if (!settings.model) throw new Error('Hãy chọn hoặc nhập tên model.');
       const payload = { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng một từ: OK' }] }], generationConfig: { maxOutputTokens: 256 } };
@@ -5735,15 +5742,19 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (settings.provider === 'gemini') {
         const ranked = await getRankedModels(settings);
         const candidates = ranked.slice(0, isAutoModel(model) ? 4 : 1);
+        // Gọi thử các model cùng lúc (không chờ thử lại), lấy model xếp hạng cao nhất trả lời được
+        const tries = candidates.map(candidate => callGeminiModel(candidate, GEMINI_PING, settings, 1, true)
+          .then(() => null, err => err));
+        const failed = [];
+        let found = '';
         for (const [index, candidate] of candidates.entries()) {
-          try {
-            await callGeminiModel(candidate, payload, settings, 2);
-            model = candidate;
-            break;
-          } catch (err) {
-            if (index === candidates.length - 1 || err.kind === 'fatal' || err.kind === 'network') throw err;
-          }
+          const err = await tries[index];
+          if (!err) { found = candidate; break; }
+          if (index === candidates.length - 1 || err.kind === 'fatal' || err.kind === 'network') throw err;
+          failed.push([candidate, err]);
         }
+        model = found;
+        lastGeminiTest = { apiKey: settings.apiKey, model: settings.model, verified: found, failed };
       } else if (settings.provider === 'openai') {
         const result = await QuizAi.createOpenAiFallback(settings)(payload);
         model = result.__model;
@@ -5781,8 +5792,17 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         geminiState.active = '';
         geminiState.probing = null;
         geminiState.noThinkingConfig = false;
-        if (now.provider !== prev.provider || now.apiKey !== prev.apiKey) geminiState.models = null;
+        // Giữ danh sách model vừa tải khi bấm Kiểm tra với chính key này
+        if (geminiState.listKey !== now.apiKey) geminiState.models = null;
       }
+      // Vừa kiểm tra thành công đúng key/model này → dùng luôn kết quả, lần gọi AI đầu tiên không phải thử lại
+      const tested = lastGeminiTest;
+      if (now.provider === 'gemini' && tested && tested.apiKey === now.apiKey && tested.model === now.model) {
+        for (const [m, err] of tested.failed) blockModel(m, err);
+        geminiState.verified.add(tested.verified);
+        geminiState.active = tested.verified;
+      }
+      lastGeminiTest = null;
       updateAiModeLabel();
       showToast(now.apiKey ? 'Đã lưu model ' + now.model + '.' : 'Đã lưu: dùng OCR để đọc ảnh.', 'ph-check-circle');
       renderQuizQuestion();
