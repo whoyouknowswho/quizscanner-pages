@@ -125,9 +125,9 @@
           <i class="ph-bold ph-spinner animate-spin"></i>
           <span id="extractProgressText" class="hidden md:inline">Đang đọc ảnh</span>
         </div>
-        <button id="aiSettingsBtn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center gap-1.5 transition" title="Cài đặt đọc chữ trong ảnh (AI Gemini / OCR miễn phí)">
+        <button id="aiSettingsBtn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 flex items-center gap-1.5 transition" title="Cài đặt API AI" aria-label="Cài đặt API AI">
           <i class="ph-bold ph-scan text-lg"></i>
-          <span id="aiModeLabel" class="hidden sm:inline text-[11px] font-bold">OCR</span>
+          <span id="aiModeLabel" class="hidden sm:inline text-[11px] font-bold">API AI</span>
         </button>
         <button id="themeToggleBtn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition" title="Đổi giao diện Sáng/Tối">
           <i class="ph-bold ph-moon dark:hidden text-lg"></i>
@@ -699,40 +699,48 @@
   </div>
 
   <!-- ==================== MODAL 3: CÀI ĐẶT ĐỌC CHỮ TRONG ẢNH ==================== -->
-  <div id="aiSettingsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-700 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl my-8">
+  <div id="aiSettingsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+    <div class="bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-700 rounded-3xl max-w-lg w-full p-4 sm:p-6 space-y-4 shadow-2xl my-auto">
       <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
         <h3 class="font-extrabold text-base flex items-center gap-2">
-          <i class="ph-bold ph-scan text-brand-500"></i> Đọc chữ trong ảnh câu hỏi
+          <i class="ph-bold ph-scan text-brand-500"></i> Cài đặt API AI
         </h3>
         <button id="closeAiSettingsBtn" class="text-slate-400 hover:text-white"><i class="ph-bold ph-x text-lg"></i></button>
       </div>
 
       <div class="space-y-3 text-xs sm:text-sm">
         <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 space-y-1.5 text-slate-600 dark:text-slate-300 leading-relaxed">
-          <p><strong class="text-purple-400">Có Gemini API key:</strong> AI chép nguyên văn câu hỏi, code C++ và các phương án từ ảnh (không dịch, không viết lại); ảnh không có phương án thì tự tạo A–E. Chạy nền cho cả bộ đề.</p>
-          <p><strong class="text-emerald-400">Không có key:</strong> dùng OCR miễn phí ngay trong trình duyệt (Tesseract). Lấy được chữ/code trong ảnh; đáp án nhiễu được tạo tự động từ code + ghi chú trong file.</p>
-          <p class="text-slate-400">Muốn AI luôn bật sẵn mà không cần nhập lại: mở file .html bằng Notepad, tìm <code class="font-mono text-purple-400">BUILT_IN_GEMINI_API_KEY</code> và dán key vào.</p>
-          <p class="text-slate-400">Lấy key miễn phí tại <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" class="text-brand-400 underline">aistudio.google.com/apikey</a>. Key chỉ lưu trong trình duyệt của bạn.</p>
+          <p>Chọn nhà cung cấp, nhập API key rồi chọn model. Model hỗ trợ ảnh có thể đọc ảnh đề. Model chỉ hỗ trợ văn bản vẫn dùng để chat và giải thích, còn Tesseract đọc ảnh.</p>
+          <p class="text-slate-400">Trình duyệt lưu API key trên thiết bị này và gửi trực tiếp đến nhà cung cấp đã chọn.</p>
         </div>
 
         <div>
-          <label for="aiApiKeyInput" class="font-bold block mb-1 text-slate-400">Gemini API key (để trống = dùng OCR miễn phí):</label>
-          <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="AIza..." class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <label for="aiProviderInput" class="font-bold block mb-1 text-slate-400">Nhà cung cấp</label>
+          <select id="aiProviderInput" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"></select>
+        </div>
+        <div id="aiBaseUrlField" class="hidden">
+          <label for="aiBaseUrlInput" class="font-bold block mb-1 text-slate-400">URL gốc API (HTTPS)</label>
+          <input id="aiBaseUrlInput" type="url" autocomplete="off" placeholder="https://api.example.com/v1" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <p class="mt-1 text-[11px] text-slate-400">API cần hỗ trợ OpenAI Chat Completions và cho phép gọi từ trình duyệt (CORS).</p>
         </div>
         <div>
-          <label for="aiModelInput" class="font-bold block mb-1 text-slate-400">Model Gemini (để <code class="font-mono">auto</code> là tốt nhất):</label>
-          <input id="aiModelInput" type="text" list="aiModelList" autocomplete="off" placeholder="auto" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
-          <datalist id="aiModelList"></datalist>
-          <p class="mt-1 text-[11px] text-slate-400"><code class="font-mono">auto</code> (khuyên dùng) = tự chọn model tốt nhất key của bạn dùng được; model nào quá tải / hết lượt thì tự chuyển model kế tiếp và quay lại khi model tốt hơn hồi phục. Tất cả đều không dùng được → OCR. Gõ tên 1 model để ưu tiên thử nó trước (tên gần đúng cũng được, vd <code class="font-mono">gemini-3.1-pro</code>).</p>
+          <label for="aiApiKeyInput" class="font-bold block mb-1 text-slate-400">API key</label>
+          <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="Để trống để dùng OCR" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
+        </div>
+        <div class="space-y-2">
+          <label for="aiModelList" class="font-bold block text-slate-400">Model</label>
+          <select id="aiModelList" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"></select>
+          <input id="aiModelInput" type="text" aria-label="Tên model nhập thủ công" autocomplete="off" spellcheck="false" placeholder="Hoặc nhập mã model thủ công" class="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-brand-500">
         </div>
         <div class="flex items-center gap-2 flex-wrap">
-          <button type="button" id="aiTestBtn" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 font-bold flex items-center gap-1.5 transition">
+          <button type="button" id="aiLoadModelsBtn" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-60">
+            <i class="ph-bold ph-list-bullets"></i> Tải danh sách model
+          </button>
+          <button type="button" id="aiTestBtn" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 font-bold flex items-center gap-1.5 transition disabled:opacity-60">
             <i class="ph-bold ph-plugs-connected"></i> Kiểm tra kết nối
           </button>
-          <span class="text-[11px] text-slate-400">Kiểm tra key + model, đồng thời tải danh sách model bạn dùng được.</span>
         </div>
-        <div id="aiTestResult" class="hidden p-2.5 rounded-xl text-xs font-semibold"></div>
+        <div id="aiTestResult" role="status" class="hidden p-2.5 rounded-xl text-xs font-semibold"></div>
         <label class="flex items-center gap-2 font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
           <input id="aiAutoOcrCheckbox" type="checkbox" class="w-4 h-4 accent-indigo-500" checked>
           Tự động đọc chữ cho cả bộ đề ngay sau khi quét (chạy nền, ưu tiên câu đang xem)
@@ -753,6 +761,7 @@
     </div>
   </div>
 
+  <script src="quiz-ai.js"></script>
   <script>
     // =========================================================================
     // 1. INDEXED-DB ENGINE & PERSISTENT STATE (KHÔNG GIỚI HẠN DUNG LƯỢNG 5MB)
@@ -1448,7 +1457,7 @@
     }
 
     function splitMultiImageQuestionsInActiveSet() {
-      if (aiAvailable()) return regroupBundlesInActiveSet();
+      if (aiCanReadImages()) return regroupBundlesInActiveSet();
       const qs = state.questions;
       const current = qs[state.currentIndex];
       const out = [];
@@ -2581,7 +2590,7 @@
 
     // =========================================================================
     // 7b. ĐỌC CHỮ TRONG ẢNH — CHẠY NỀN CHO CẢ BỘ ĐỀ
-    //     • Có Gemini key: AI chép nguyên văn câu hỏi, code, phương án từ ảnh (thiếu phương án thì tự tạo A–E)
+    //     • Model AI hỗ trợ ảnh chép câu hỏi, code và phương án từ ảnh
     //       (gộp nhiều câu vào 1 lần gọi + chạy song song → nhanh, ít tốn lượt)
     //     • Không có key / AI lỗi / hết lượt: OCR miễn phí (Tesseract) nhiều luồng song song
     // =========================================================================
@@ -2592,7 +2601,6 @@
     const BUILT_IN_GEMINI_API_KEY = '';
 
     const AI_SETTINGS_KEY = 'QuizScannerPro_AiSettings_v1';
-    const DEFAULT_GEMINI_MODEL = 'auto'; // tự chọn model tốt nhất dùng được
     const TESSERACT_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
     const GEMINI_BATCH_SIZE = 4;   // số câu gửi trong 1 lần gọi AI
     const AI_VERIFY_PASS = true;     // AI đọc lần 2 để đối chiếu và sửa lỗi chép sai (chính xác hơn, tốn thêm 1 lượt gọi / lô)
@@ -2607,12 +2615,14 @@
       aiRunning: 0,
       ocrRunning: 0,
       aiDisabledReason: '',    // AI tạm tắt trong phiên (sai key, hết lượt...)
+      aiNoVision: false,      // model đã từ chối ảnh, vẫn dùng được cho văn bản
       blockedReason: '',       // OCR tạm dừng (không tải được thư viện)
       processedThisRun: 0,
       lastAiToastAt: 0,
       recoveryText: '',        // tiến độ khôi phục ảnh gốc từ file Word đã lưu
       aiFails: new Map()       // questionId -> số lần AI lỗi tạm thời
     };
+    let aiConnectionVersion = 0;
 
     function getAiSettings() {
       let saved = {};
@@ -2621,58 +2631,76 @@
       } catch (_) {
         saved = {};
       }
-      const userKey = String(saved.apiKey || '').trim();
-      const builtInKey = String(BUILT_IN_GEMINI_API_KEY || '').trim();
-      return {
-        apiKey: userKey || builtInKey,
-        userKey,
-        hasBuiltInKey: !!builtInKey,
-        model: String(saved.model || '').trim() || DEFAULT_GEMINI_MODEL,
-        autoOcr: saved.autoOcr !== false,
-        autoExplain: saved.autoExplain !== false
-      };
+      return QuizAi.normalizeSettings(saved, BUILT_IN_GEMINI_API_KEY);
     }
 
     function saveAiSettings(settings) {
       try {
         localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify({
-          apiKey: settings.apiKey,
+          provider: settings.provider,
+          baseUrl: settings.baseUrl,
+          apiKey: settings.userKey,
           model: settings.model,
+          vision: settings.vision,
           autoOcr: settings.autoOcr,
           autoExplain: settings.autoExplain
         }));
+        return true;
       } catch (_) {
         showToast('Trình duyệt không cho lưu cài đặt (chế độ ẩn danh?).', 'ph-warning');
+        return false;
       }
-      updateAiModeLabel();
     }
 
-    function aiAvailable() {
-      return !!getAiSettings().apiKey && !extraction.aiDisabledReason && Date.now() >= (extraction.aiPausedUntil || 0);
+    function sameAiConnection(a, b) {
+      return a.provider === b.provider && a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model;
+    }
+
+    function captureAiConnection() {
+      return { ...getAiSettings(), version: aiConnectionVersion };
+    }
+
+    function assertAiConnection(settings) {
+      if (settings.version !== undefined && (settings.version !== aiConnectionVersion || !sameAiConnection(settings, getAiSettings()))) {
+        throw new AiError('Cài đặt API đã thay đổi. Hãy thử lại.', 'changed');
+      }
+    }
+
+    function aiAvailable(settings = getAiSettings()) {
+      return !!(settings.apiKey && settings.model) && !extraction.aiDisabledReason && Date.now() >= (extraction.aiPausedUntil || 0);
+    }
+
+    function aiCanReadImages(settings = getAiSettings()) {
+      return aiAvailable(settings) && settings.vision !== false && !extraction.aiNoVision;
     }
 
     function updateAiModeLabel() {
-      const { apiKey } = getAiSettings();
-      const usingAi = aiAvailable();
+      const settings = getAiSettings();
+      const { apiKey } = settings;
+      const usingAi = aiAvailable(settings);
       const label = document.getElementById('aiModeLabel');
       if (label) {
-        label.textContent = usingAi ? 'AI' : 'OCR';
         label.className = `hidden sm:inline text-[11px] font-bold ${usingAi ? 'text-purple-400' : 'text-emerald-500'}`;
       }
       const info = document.getElementById('scanEngineInfo');
       if (info) {
         if (usingAi) {
-          const chosen = getAiSettings().model;
-          const modelName = escapeHtml(geminiState.active || (isAutoModel(chosen) ? 'tự chọn model tốt nhất' : normalizeModelName(chosen)));
+          const model = settings.provider === 'gemini'
+            ? geminiState.active || (isAutoModel(settings.model) ? 'tự chọn model' : settings.model)
+            : settings.model;
+          const name = escapeHtml(QuizAi.providers[settings.provider].label + ' · ' + model);
+          const mode = aiCanReadImages(settings)
+            ? 'AI đọc ảnh câu hỏi, chat và giải thích.'
+            : 'AI chat và giải thích. Tesseract đọc ảnh câu hỏi.';
           info.innerHTML = `<i class="ph-fill ph-sparkle text-purple-400 text-base shrink-0 mt-0.5"></i>
-            <span><strong>AI Gemini đang bật (${modelName}):</strong> chép nguyên văn câu hỏi, code và phương án từ ảnh cho cả bộ đề (chạy nền); ảnh không có phương án thì tự tạo A–E.</span>`;
+            <span><strong>${name}</strong> · ${mode}</span>`;
         } else {
           const paused = apiKey && !extraction.aiDisabledReason && Date.now() < (extraction.aiPausedUntil || 0);
           const why = apiKey && extraction.aiDisabledReason
             ? `AI tạm tắt (${escapeHtml(extraction.aiDisabledReason)}). `
             : paused
               ? `Tất cả model AI đang quá tải/hết lượt, sẽ thử lại lúc ${new Date(extraction.aiPausedUntil).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}. `
-              : 'Chưa có Gemini key. ';
+              : 'Chưa cài đặt API AI. ';
           info.innerHTML = `<i class="ph-fill ph-scan text-emerald-400 text-base shrink-0 mt-0.5"></i>
             <span>${why}Đang dùng <strong>OCR miễn phí</strong> để đọc chữ trong ảnh.
             <button type="button" onclick="openAiSettingsModal()" class="text-brand-400 underline font-bold">Bật AI</button></span>`;
@@ -3662,7 +3690,7 @@ LẦN TRƯỚC code vẫn còn thiếu hoặc bị viết lại sai (mất các 
 ĐÂY LÀ LẦN KIỂM TRA LẠI: mỗi câu kèm "BẢN CHÉP NHÁP LẦN 1" có thể sai ký tự, thiếu dòng, thiếu / sai phương án, tách sai khối text-code. Nhìn lại ảnh, so sánh từng dòng với bản nháp, sửa mọi chỗ sai và trả về BẢN CUỐI CÙNG đầy đủ (cùng định dạng, đúng số phần tử). Giữ nguyên generatedLines của bản nháp nếu có.` : base;
     }
 
-    async function geminiGroupQuestion(q) {
+    async function geminiGroupQuestion(q, settings) {
       const prepared = await Promise.all(q.images.map(src => prepareImageForAi(src, 0)));
       const parts = [{ text: `Các ảnh dưới đây được chụp LIÊN TIẾP từ bài thi trắc nghiệm, đúng thứ tự. Một câu hỏi có thể bị chụp tách thành nhiều ảnh (đề ở ảnh trước, phương án ở ảnh sau; code dài bị cuộn sang ảnh sau; phương án bị cắt giữa chừng), hoặc các ảnh là những câu khác nhau.
 Hãy gom ảnh thành các nhóm, mỗi nhóm là 1 câu hỏi hoàn chỉnh. Mỗi ảnh thuộc đúng 1 nhóm, nhóm chỉ gồm các ảnh LIỀN NHAU.
@@ -3670,11 +3698,11 @@ CÙNG 1 CÂU nếu: có cùng số câu ("Câu N/50"); ảnh sau tiếp nối đ
 KHÁC CÂU nếu: số câu khác nhau; ảnh sau có lời dẫn / đề mới hoàn chỉnh; ảnh trước đã đủ đề + phương án.
 Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 1).` }];
       prepared.forEach((src, i) => { parts.push({ text: `\nẢNH ${i + 1}` }); const p = toInlineImagePart(src); if (p) parts.push(p); });
-      const data = await geminiRequest({
+      const data = await requestAi({
         contents: [{ role: 'user', parts }],
         generationConfig: { temperature: 0, responseMimeType: 'application/json',
           responseSchema: { type: 'OBJECT', properties: { groups: { type: 'ARRAY', items: { type: 'ARRAY', items: { type: 'INTEGER' } } } }, required: ['groups'] } }
-      });
+      }, settings);
       const raw = (data.candidates?.[0]?.content?.parts || []).filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('');
       let groups = [];
       try { groups = JSON.parse(raw.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')).groups || []; } catch (_) { groups = []; }
@@ -3753,7 +3781,9 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       let pageToken = '';
       for (let i = 0; i < 5; i++) {
         const res = await fetch(`${GEMINI_BASE}/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, {
-          headers: { 'x-goog-api-key': apiKey }
+          headers: { 'x-goog-api-key': apiKey },
+          redirect: 'error',
+          signal: AbortSignal.timeout(20000)
         });
         let body = {};
         try { body = await res.json(); } catch (_) { body = {}; }
@@ -3848,33 +3878,35 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       return !!b && b.until > Date.now();
     }
 
-    function geminiConfigFor(model, payload) {
+    function geminiConfigFor(model, payload, noThinkingConfig) {
       const body = JSON.parse(JSON.stringify(payload));
       body.generationConfig = body.generationConfig || {};
       if (/^gemini-3/.test(model)) {
         // Gemini 3: Google khuyên giữ temperature mặc định; suy nghĩ ở mức thấp cho nhanh
         delete body.generationConfig.temperature;
-        if (!geminiState.noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: /pro/.test(model) ? 'high' : 'medium' };
+        if (!noThinkingConfig) body.generationConfig.thinkingConfig = { thinkingLevel: /pro/.test(model) ? 'high' : 'medium' };
       }
       return body;
     }
 
     // Gọi 1 model (có thử lại khi lỗi mạng / quá tải ngắn). Ném AiError đã phân loại nếu thất bại.
-    async function callGeminiModel(model, payload, attempts = 3, apiKeyOverride = '') {
-      const apiKey = apiKeyOverride || getAiSettings().apiKey;
+    async function callGeminiModel(model, payload, settings, attempts = 3) {
       const url = `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`;
       const isPro = /pro/.test(model);
       let delay = 2000;
+      let noThinkingConfig = settings.version !== undefined && geminiState.noThinkingConfig;
       for (let attempt = 0; attempt < attempts; attempt++) {
-        const body = geminiConfigFor(model, payload);
+        assertAiConnection(settings);
+        const body = geminiConfigFor(model, payload, noThinkingConfig);
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), isPro ? 240000 : 120000);
         let res;
         try {
           res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
             body: JSON.stringify(body),
+            redirect: 'error',
             signal: controller.signal
           });
         } catch (err) {
@@ -3887,12 +3919,15 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
           continue;
         }
         clearTimeout(timer);
+        assertAiConnection(settings);
         if (res.ok) return res.json();
         let errBody = {};
         try { errBody = await res.json(); } catch (_) { errBody = {}; }
         const msg = String(errBody?.error?.message || '');
         if (res.status === 400 && body.generationConfig.thinkingConfig && /thinking/i.test(msg)) {
-          geminiState.noThinkingConfig = true; // model không nhận thinkingLevel → gửi lại không có
+          assertAiConnection(settings);
+          noThinkingConfig = true;
+          if (settings.version !== undefined) geminiState.noThinkingConfig = true;
           continue;
         }
         const err = describeGeminiError(res.status, errBody, model);
@@ -3910,23 +3945,28 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     // Chọn model tốt nhất đang dùng được (gọi thử nhẹ những model chưa kiểm tra)
-    async function getActiveModel() {
+    async function getActiveModel(settings) {
       while (geminiState.probing) await geminiState.probing;
+      assertAiConnection(settings);
       if (geminiState.active && !modelBlockedNow(geminiState.active)) {
         // có model tốt hơn vừa hết thời gian khoá → quay lại dùng nó
-        const ranked = await getRankedModels();
+        const ranked = await getRankedModels(settings);
+        assertAiConnection(settings);
         const better = ranked.slice(0, ranked.indexOf(geminiState.active)).find(m => !modelBlockedNow(m));
         if (!better) return geminiState.active;
       }
       const job = (async () => {
-        const ranked = await getRankedModels();
+        const ranked = await getRankedModels(settings);
+        assertAiConnection(settings);
         for (const m of ranked) {
           if (modelBlockedNow(m)) continue;
           if (!geminiState.verified.has(m)) {
             try {
-              await callGeminiModel(m, { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 64 } }, 2);
+              await callGeminiModel(m, { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 64 } }, settings, 2);
+              assertAiConnection(settings);
               geminiState.verified.add(m);
             } catch (err) {
+              assertAiConnection(settings);
               if (err.kind === 'fatal' || err.kind === 'network') throw err;
               blockModel(m, err);
               continue;
@@ -3946,7 +3986,10 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         err.retryAt = timed.length ? Math.min(...timed) : Infinity;
         throw err;
       })();
-      geminiState.probing = job.catch(() => {}).finally(() => { geminiState.probing = null; });
+      const probing = job.catch(() => {}).finally(() => {
+        if (geminiState.probing === probing) geminiState.probing = null;
+      });
+      geminiState.probing = probing;
       return job;
     }
 
@@ -3976,16 +4019,18 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     // Gửi yêu cầu bằng model tốt nhất đang dùng được; model lỗi thì khoá tạm và tự chuyển model kế tiếp
-    async function geminiRequest(payload) {
+    async function geminiRequest(payload, settings) {
       for (let hop = 0; hop < 12; hop++) {
-        const model = await getActiveModel();
+        const model = await getActiveModel(settings);
         try {
-          const data = await callGeminiModel(model, payload);
+          const data = await callGeminiModel(model, payload, settings);
+          assertAiConnection(settings);
           data.__model = model;
           const b = geminiState.blocked.get(model);
           if (b) b.strikes = 0;
           return data;
         } catch (err) {
+          assertAiConnection(settings);
           if (!(err instanceof AiError) || err.kind === 'fatal' || err.kind === 'network' || err.kind === 'request') throw err;
           blockModel(model, err);
           showToast(`AI: model ${model} ${err.message} → thử model khác`, 'ph-warning');
@@ -3994,30 +4039,20 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       throw new AiError('Không tìm được model AI dùng được', 'all');
     }
 
-    // Kiểm tra key và tìm model tốt nhất dùng được ngay trong cửa sổ cài đặt
-    async function testGeminiConnection(apiKey, model) {
-      geminiState.verified.clear();
-      geminiState.blocked.clear();
-      geminiState.active = '';
-      geminiState.models = null;
-      const names = await listGeminiModels(apiKey);
-      const tried = [];
-      const ranked = await getRankedModels({ apiKey, model });
-      for (const m of ranked) {
-        try {
-          await callGeminiModel(m, { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng 1 từ: OK' }] }], generationConfig: { maxOutputTokens: 64 } }, 2, apiKey);
-          geminiState.verified.add(m);
-          geminiState.active = m;
-          return { model: m, names, tried, ranked };
-        } catch (err) {
-          if (err.kind === 'fatal' || err.kind === 'network') throw err;
-          blockModel(m, err);
-          tried.push(`${m}: ${err.message}`);
+    async function requestAi(payload, settings) {
+      assertAiConnection(settings);
+      try {
+        const result = await (settings.provider === 'gemini' ? geminiRequest(payload, settings) : QuizAi.generate(settings, payload));
+        assertAiConnection(settings);
+        return result;
+      } catch (err) {
+        assertAiConnection(settings);
+        if (err.kind === 'vision') {
+          extraction.aiNoVision = true;
+          updateAiModeLabel();
         }
+        throw err instanceof AiError ? err : new AiError(err.message, err.kind || 'other');
       }
-      const e = new AiError(`Không model nào dùng được: ${tried.slice(0, 4).join(' · ')}`, 'all');
-      e.names = names;
-      throw e;
     }
 
     function applyAiResult(q, r) {
@@ -4106,14 +4141,14 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       q.isValidQuestion = true;
       q.aiUpgrade = false;
       q.ocrDone = true;
-      q.ocrEngine = 'gemini';
+      q.ocrEngine = 'gemini'; // Giữ mã lưu trữ cũ cho câu đã được AI đọc.
       q.ocrVersion = OCR_VERSION;
       q.reextract = false;
       return true;
     }
 
     // Bước tái tạo: code chép từ ảnh còn thiếu (class bị cắt mất, hàm được gọi nhưng chưa có...) → AI nhìn ảnh + bản chép rồi dựng đầy đủ
-    async function geminiRebuildBatch(items) {
+    async function geminiRebuildBatch(items, settings) {
       const all = items.filter(q => Array.isArray(q.images) && q.images.length > 0);
       let todo = all.slice();
       const incomplete = new Set();
@@ -4134,7 +4169,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
           parts.push({ text: `\n=== CÂU q${i + 1} ===\nGhi chú đáp án trong file: ${note ? JSON.stringify(note) : '(không có)'}\nVẤN ĐỀ PHÁT HIỆN: ${issues.join('; ') || (q.aiComplete === false ? 'AI báo đề / code trong ảnh chưa đầy đủ' : '(yêu cầu tái tạo lại cho đầy đủ)')}\nBẢN CHÉP HIỆN TẠI: ${JSON.stringify(draft)}` });
           (await Promise.all(q.images.map(src => prepareImageForAi(src, 0)))).map(toInlineImagePart).filter(Boolean).forEach(p => parts.push(p));
         }
-        const res = parseResults(await geminiRequest({ contents: [{ role: 'user', parts }], generationConfig: genConfig }));
+        const res = parseResults(await requestAi({ contents: [{ role: 'user', parts }], generationConfig: genConfig }, settings));
         const map = new Map(res.map(r => [String(r?.key || '').trim().toLowerCase(), r]));
         const again = [];
         todo.forEach((q, i) => {
@@ -4194,26 +4229,27 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     // Gửi nhiều câu trong 1 lần gọi. Trả về danh sách câu AI chưa xử lý được (sẽ chuyển sang OCR).
-    async function geminiExtractBatch(questions) {
+    async function geminiExtractBatch(questions, settings) {
       if (questions.some(q => state.questions.includes(q))) await ensureOriginalsForActiveSet();
+      assertAiConnection(settings);
       // Câu đã đọc xong nhưng code còn thiếu → chỉ chạy bước tái tạo (không đọc lại từ đầu)
       const rebuildOnly = questions.filter(q => q.rebuild && q.reextract !== true && !q.needsGrouping && q.ocrEngine === 'gemini' && Array.isArray(q.blocks));
-      if (rebuildOnly.length) await geminiRebuildBatch(rebuildOnly);
+      if (rebuildOnly.length) await geminiRebuildBatch(rebuildOnly, settings);
       // Bước 1: AI xem các ảnh liền nhau để quyết định câu nào bị chụp tách (gộp) hoặc là nhiều câu (tách)
       for (const q of questions.slice()) {
         if (!q.needsGrouping || !Array.isArray(q.images) || q.images.length < 2) { q.needsGrouping = false; continue; }
-        const groups = await geminiGroupQuestion(q);
+        const groups = await geminiGroupQuestion(q, settings);
         const added = applyImageGroups(q, groups);
         added.forEach(a => { questions.push(a); extraction.inFlight.set(a.id, 'ai'); }); // câu mới tách ra thuộc cùng lô → đánh dấu đang xử lý, tránh bị đọc trùng
         const merged = groups.filter(g => g.length > 1).length;
         if (merged) showToast(`Đã gộp ${merged} câu bị chụp tách thành nhiều ảnh.`, 'ph-git-merge');
         scheduleSave();
       }
-      return geminiExtractInChunks(questions.filter(q => !rebuildOnly.includes(q)));
+      return geminiExtractInChunks(questions.filter(q => !rebuildOnly.includes(q)), settings);
     }
 
     // Chia các câu thành những lô vừa dung lượng cho 1 lần gọi (Google từ chối yêu cầu > ~20MB)
-    async function geminiExtractInChunks(list) {
+    async function geminiExtractInChunks(list, settings) {
       const out = [];
       let chunk = [];
       let size = 0;
@@ -4222,7 +4258,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         const current = chunk;
         chunk = [];
         size = 0;
-        out.push(...await geminiExtractSafe(current));
+        out.push(...await geminiExtractSafe(current, settings));
       };
       for (const q of list) {
         const s = await aiPayloadSize(q);
@@ -4235,23 +4271,23 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     // Google từ chối vì yêu cầu quá lớn / câu trả lời quá dài bị cắt → chia đôi lô rồi gửi lại; còn 1 câu thì thu nhỏ ảnh thêm
-    async function geminiExtractSafe(chunk, shrink = 0) {
+    async function geminiExtractSafe(chunk, settings, shrink = 0) {
       try {
-        return await geminiExtractChunk(chunk, shrink);
+        return await geminiExtractChunk(chunk, settings, shrink);
       } catch (err) {
         if (!(err instanceof AiError) || (err.kind !== 'request' && err.kind !== 'truncated')) throw err;
         if (chunk.length > 1) {
           const mid = Math.ceil(chunk.length / 2);
-          const first = await geminiExtractSafe(chunk.slice(0, mid), shrink);
-          const second = await geminiExtractSafe(chunk.slice(mid), shrink);
+          const first = await geminiExtractSafe(chunk.slice(0, mid), settings, shrink);
+          const second = await geminiExtractSafe(chunk.slice(mid), settings, shrink);
           return first.concat(second);
         }
-        if (shrink < AI_IMAGE_STEPS.length - 1) return geminiExtractSafe(chunk, shrink + 1);
+        if (shrink < AI_IMAGE_STEPS.length - 1) return geminiExtractSafe(chunk, settings, shrink + 1);
         throw err;
       }
     }
 
-    async function geminiExtractChunk(questions, shrink = 0) {
+    async function geminiExtractChunk(questions, settings, shrink = 0) {
       const rebuildOnly = [];
       const parts = [{ text: buildGeminiInstruction(questions.length) }];
       const keyed = [];
@@ -4274,10 +4310,10 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
       const { genConfig, parseResults } = geminiResultConfig();
 
-      const data = await geminiRequest({
+      const data = await requestAi({
         contents: [{ role: 'user', parts }],
         generationConfig: genConfig
-      });
+      }, settings);
 
       if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new AiError('AI trả lời quá dài nên bị cắt giữa chừng', 'truncated');
       const rawText = (data.candidates?.[0]?.content?.parts || [])
@@ -4340,7 +4376,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
             q.multiQuestionSplitDone = true;
             insertSiblingQuestionsAfter(q, children);
             q._spawnedQuestions = (q._spawnedQuestions || []).concat(children);
-            showToast(`Gemini phát hiện ${children.length + 1} câu trong cùng ảnh và đã tách riêng.`, 'ph-scissors');
+            showToast(`AI phát hiện ${children.length + 1} câu trong cùng ảnh và đã tách riêng.`, 'ph-scissors');
           }
         }
       });
@@ -4358,7 +4394,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
               vparts.push({ text: `\n=== CÂU q${i + 1} ===\nGhi chú đáp án trong file: ${note ? JSON.stringify(note) : '(không có)'}\nBẢN CHÉP NHÁP LẦN 1: ${JSON.stringify(draft)}` });
               prepared.get(q).map(toInlineImagePart).filter(Boolean).forEach(p => vparts.push(p));
             });
-            const vres = parseResults(await geminiRequest({ contents: [{ role: 'user', parts: vparts }], generationConfig: genConfig }));
+            const vres = parseResults(await requestAi({ contents: [{ role: 'user', parts: vparts }], generationConfig: genConfig }, settings));
             const vmap = new Map(vres.map(r => [String(r?.key || '').trim().toLowerCase(), r]));
             ok.forEach(({ q }, i) => {
               const r2 = vmap.get(`q${i + 1}`) || (vres.length === ok.length ? vres[i] : null);
@@ -4373,7 +4409,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       try {
         const done = keyed.filter(({ q }) => !leftovers.includes(q) && q.ocrEngine === 'gemini').map(x => x.q);
         const need = done.filter(needsRebuild);
-        if (need.length) await geminiRebuildBatch(need);
+        if (need.length) await geminiRebuildBatch(need, settings);
         done.forEach(q => { q.codeChecked = 1; });
       } catch (e) {
         console.warn('Bước tái tạo code không chạy được:', e);
@@ -4383,8 +4419,13 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     function handleAiError(err) {
-      console.warn('Gemini lỗi:', err);
-      if (err && err.kind === 'fatal') {
+      if (err?.kind === 'changed') return 'changed';
+      console.warn('API AI lỗi:', err);
+      if (err?.kind === 'vision') {
+        showToast('Model chỉ dùng được với văn bản. Đang chuyển sang OCR để đọc ảnh.', 'ph-warning');
+        return 'ocr';
+      }
+      if (err && (err.kind === 'fatal' || err.kind === 'model')) {
         if (!extraction.aiDisabledReason) {
           extraction.aiDisabledReason = err.message;
           showToast(`AI: ${err.message} → chuyển sang OCR miễn phí`, 'ph-warning');
@@ -4461,8 +4502,8 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         && Array.isArray(q.images) && q.images.length > 0
         && !extraction.failed.has(q.id)
         && (q.reextract === true || (!q.ocrDone && !String(q.code || '').trim())
-          || (q.aiUpgrade === true && !extraction.forceOcr.has(q.id) && aiAvailable())
-          || (q.rebuild === true && q.ocrEngine === 'gemini' && aiAvailable()));
+          || (q.aiUpgrade === true && !extraction.forceOcr.has(q.id) && aiCanReadImages())
+          || (q.rebuild === true && q.ocrEngine === 'gemini' && aiCanReadImages()));
     }
 
     // Câu đang xem được ưu tiên trước, sau đó lần lượt các câu phía sau
@@ -4482,15 +4523,18 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     function pumpExtraction() {
       const pending = collectPendingQuestions();
-      const useAi = aiAvailable();
+      const useAi = aiCanReadImages();
       const aiQueue = useAi ? pending.filter(q => !extraction.forceOcr.has(q.id)) : [];
       const ocrQueue = useAi ? pending.filter(q => extraction.forceOcr.has(q.id)) : pending;
 
       while (extraction.aiRunning < GEMINI_CONCURRENCY && aiQueue.length > 0) {
         // Câu đang xem gửi riêng cho nhanh, các câu sau gộp theo lô
         const first = aiQueue[0] === state.questions[state.currentIndex] && extraction.aiRunning === 0;
-        const proModel = /pro/.test(geminiState.active || normalizeModelName(getAiSettings().model));
-        const size = first || aiQueue[0]?.id && extraction.aiFails.has(aiQueue[0].id) ? 1 : (proModel ? 3 : GEMINI_BATCH_SIZE);
+        const settings = getAiSettings();
+        const proModel = /pro/.test(geminiState.active || normalizeModelName(settings.model));
+        // Các API khác có thể giới hạn số ảnh mỗi lượt, nên gửi mỗi câu riêng.
+        const single = settings.provider !== 'gemini' || first || extraction.aiFails.has(aiQueue[0]?.id);
+        const size = single ? 1 : (proModel ? 3 : GEMINI_BATCH_SIZE);
         const batch = aiQueue.splice(0, size).filter(q => !extraction.inFlight.has(q.id));
         if (batch.length) startAiJob(batch);
       }
@@ -4514,13 +4558,14 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     async function startAiJob(batch) {
+      const settings = captureAiConnection();
       extraction.aiRunning++;
       batch.forEach(q => extraction.inFlight.set(q.id, 'ai'));
       onJobStateChange(batch);
       let leftovers = batch;
       let toOcr = [];
       try {
-        leftovers = await geminiExtractBatch(batch);
+        leftovers = await geminiExtractBatch(batch, settings);
         toOcr = leftovers; // AI bỏ sót / ảnh không phải đề → OCR
       } catch (err) {
         const action = handleAiError(err);
@@ -4739,7 +4784,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       if (!state.activeSetId || preparedSetIds.has(state.activeSetId)) return;
       preparedSetIds.add(state.activeSetId);
       let changed = splitMultiImageQuestionsInActiveSet();
-      const useAi = aiAvailable();
+      const useAi = aiCanReadImages();
       state.questions.forEach(q => {
         const hasImages = Array.isArray(q.images) && q.images.length > 0;
         if (q.userEdited) return; // câu bạn đã tự sửa → không động vào
@@ -4850,7 +4895,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         else if (issues.length && !q.reconstructed) notes.push(`Code trong ảnh có vẻ chưa đầy đủ: ${issues.slice(0, 2).join('; ')}.`);
         if (getQuestionBlocks(q).some(b => b.type === 'code' && (b.gen || []).length)) notes.push('Dòng tô vàng là phần AI tái tạo.');
         if (notes.length) {
-          const canRebuild = aiAvailable() && (issues.length || q.reconstructed || q.rebuildIncomplete);
+          const canRebuild = aiCanReadImages() && (issues.length || q.reconstructed || q.rebuildIncomplete);
           box.className = `${base} bg-sky-500/10 text-sky-400 border border-sky-500/30`;
           box.innerHTML = `<i class="ph-bold ph-info"></i> <span>${notes.join(' ')}</span>${canRebuild ? `<button type="button" onclick="rebuildCodeCurrentQuestion()" class="ml-auto px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 font-bold flex items-center gap-1"><i class="ph-bold ph-magic-wand"></i> Tái tạo code</button>` : ''}`;
         } else {
@@ -4860,7 +4905,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         return;
       }
       if (running) {
-        const engine = running === 'ai' ? 'AI Gemini' : 'OCR';
+        const engine = running === 'ai' ? 'AI' : 'OCR';
         const firstLoad = running === 'ocr' && !ocrPool.scheduler ? ' (lần đầu cần tải thư viện OCR, vui lòng chờ)' : '';
         box.className = `${base} bg-brand-500/10 text-brand-500 dark:text-brand-300 border border-brand-500/30`;
         box.innerHTML = `<i class="ph-bold ph-spinner animate-spin"></i> Đang đọc chữ trong ảnh bằng ${engine}...${firstLoad}`;
@@ -4883,7 +4928,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     function rebuildCodeCurrentQuestion() {
       const q = state.questions[state.currentIndex];
       if (!q || !Array.isArray(q.images) || q.images.length === 0) return;
-      if (!aiAvailable()) { showToast('Cần bật AI (dán API key) để tái tạo code.', 'ph-warning'); return; }
+      if (!aiCanReadImages()) { showToast('Cần chọn model AI hỗ trợ ảnh để tái tạo code.', 'ph-warning'); return; }
       if (extraction.inFlight.has(q.id)) return;
       extraction.failed.delete(q.id);
       extraction.forceOcr.delete(q.id);
@@ -4906,7 +4951,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       extraction.manual.add(q.id);
       q.userEdited = false; // bấm "Đọc lại" = muốn đọc mới từ ảnh
       q.reextract = true;
-      showToast(aiAvailable() ? 'AI đang đọc lại câu hỏi từ ảnh...' : 'Đang đọc chữ trong ảnh...', 'ph-sparkle');
+      showToast(aiCanReadImages() ? 'AI đang đọc lại câu hỏi từ ảnh...' : 'Đang đọc chữ trong ảnh...', 'ph-sparkle');
       renderQuizQuestion();
     }
 
@@ -4916,18 +4961,15 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     function openAiSettingsModal() {
       const s = getAiSettings();
+      document.getElementById('aiProviderInput').value = s.provider;
+      document.getElementById('aiBaseUrlInput').value = s.baseUrl;
       document.getElementById('aiApiKeyInput').value = s.userKey;
-      document.getElementById('aiApiKeyInput').placeholder = s.hasBuiltInKey ? 'Đang dùng key dán sẵn trong file' : 'AIza...';
       document.getElementById('aiModelInput').value = s.model;
       document.getElementById('aiAutoOcrCheckbox').checked = s.autoOcr;
       document.getElementById('aiAutoExplainCheckbox').checked = s.autoExplain;
-      document.getElementById('aiTestResult').className = 'hidden';
+      resetAiModelForm();
       if (s.apiKey && extraction.aiDisabledReason) {
         showAiTestResult(false, `<i class="ph-bold ph-warning-circle"></i> AI đang tạm tắt: ${escapeHtml(extraction.aiDisabledReason)}`);
-      } else if (s.apiKey && geminiState.active) {
-        const blockedNow = [...geminiState.blocked.entries()].filter(([m]) => modelBlockedNow(m)).slice(0, 4);
-        showAiTestResult(true, `<i class="ph-bold ph-info"></i> Đang dùng model <code class="font-mono">${escapeHtml(geminiState.active)}</code>.`
-          + (blockedNow.length ? `<br>Đang tạm bỏ qua: ${blockedNow.map(([m, b]) => `${escapeHtml(m)} (${escapeHtml(b.reason)})`).join(', ')}` : ''));
       }
       const upgradeBtn = document.getElementById('aiUpgradeBtn');
       const n = countOcrOnlyQuestions();
@@ -4937,6 +4979,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     function closeAiSettingsModal() {
+      aiFormRevision++;
       document.getElementById('aiSettingsModal').classList.add('hidden');
     }
 
@@ -5100,7 +5143,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
             isValidQuestion: true
           }));
         });
-        const finalQs = aiAvailable() ? mergeCandidateChains(questions) : questions;
+        const finalQs = aiCanReadImages() ? mergeCandidateChains(questions) : questions;
         finalQs.skippedDuplicates = skippedDuplicates;
         return finalQs;
       }
@@ -5321,51 +5364,156 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       box.innerHTML = html;
     }
 
-    function fillModelDatalist(names) {
-      const ranked = names.map(n => [n, modelScore(n, names)]).filter(([, sc]) => sc >= 0).sort((x, y) => y[1] - x[1]).map(([n]) => n);
-      document.getElementById('aiModelList').innerHTML = ['auto', ...ranked].map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+    const aiProviderInput = document.getElementById('aiProviderInput');
+    const aiModelInput = document.getElementById('aiModelInput');
+    const aiModelList = document.getElementById('aiModelList');
+    const aiKeyInput = document.getElementById('aiApiKeyInput');
+    const aiBaseUrlInput = document.getElementById('aiBaseUrlInput');
+    const aiLoadModelsBtn = document.getElementById('aiLoadModelsBtn');
+    const aiTestBtn = document.getElementById('aiTestBtn');
+    let aiFormRevision = 0;
+    let aiModelChoices = new Map();
+
+    for (const [id, { label }] of Object.entries(QuizAi.providers)) aiProviderInput.add(new Option(label, id));
+
+    function fillAiModelChoices(models) {
+      aiModelChoices = new Map(models.map(model => [model.id, model]));
+      const gemini = aiProviderInput.value === 'gemini';
+      aiModelList.replaceChildren(new Option('Chọn model từ danh sách', ''));
+      if (gemini) aiModelList.add(new Option('Tự chọn model (Gemini)', 'auto'));
+      for (const { id, vision } of models) {
+        aiModelList.add(new Option(vision === true ? id + ' · hỗ trợ ảnh' : id, id));
+      }
+      aiModelList.disabled = !gemini && models.length === 0;
+      aiModelList.value = aiModelChoices.has(aiModelInput.value) || (gemini && aiModelInput.value === 'auto')
+        ? aiModelInput.value : '';
     }
 
-    document.getElementById('aiTestBtn').addEventListener('click', async () => {
-      const key = document.getElementById('aiApiKeyInput').value.trim() || getAiSettings().apiKey;
-      const model = document.getElementById('aiModelInput').value.trim() || DEFAULT_GEMINI_MODEL;
-      if (!key) {
-        showAiTestResult(false, 'Chưa nhập Gemini API key.');
-        return;
-      }
-      const btn = document.getElementById('aiTestBtn');
-      btn.disabled = true;
-      showAiTestResult(true, '<i class="ph-bold ph-spinner animate-spin"></i> Đang thử lần lượt các model từ tốt nhất...');
-      try {
-        const { model: found, names, tried, ranked } = await testGeminiConnection(key, model);
-        fillModelDatalist(names);
-        const order = ranked.slice(0, 6).map(m => `<code class="font-mono">${escapeHtml(m)}</code>`).join(' → ');
-        showAiTestResult(true, `<i class="ph-bold ph-check-circle"></i> Model tốt nhất dùng được: <code class="font-mono">${escapeHtml(found)}</code>.`
-          + (tried.length ? `<br>Đã bỏ qua: ${tried.map(escapeHtml).join(' · ')}` : '')
-          + `<br><span class="text-slate-400">Thứ tự thử khi có lỗi: ${order}${ranked.length > 6 ? ' …' : ''}</span>`
-          + `<br>Bấm <strong>Lưu cài đặt</strong> để dùng.`);
-      } catch (err) {
-        try { fillModelDatalist(err.names || await listGeminiModels(key)); } catch (_) { /* key sai */ }
-        showAiTestResult(false, `<i class="ph-bold ph-warning-circle"></i> ${escapeHtml(err?.message || 'Lỗi không xác định')}`);
-      } finally {
-        btn.disabled = false;
-      }
+    function resetAiModelForm() {
+      aiFormRevision++;
+      document.getElementById('aiTestResult').className = 'hidden';
+      document.getElementById('aiBaseUrlField').classList.toggle('hidden', aiProviderInput.value !== 'custom');
+      const builtIn = aiProviderInput.value === 'gemini' && BUILT_IN_GEMINI_API_KEY.trim();
+      aiKeyInput.placeholder = builtIn ? 'Đang dùng key cài sẵn' : 'Để trống để dùng OCR';
+      fillAiModelChoices([]);
+    }
+
+    function readAiSettingsForm() {
+      const settings = QuizAi.normalizeSettings({
+        provider: aiProviderInput.value,
+        baseUrl: aiBaseUrlInput.value,
+        apiKey: aiKeyInput.value,
+        model: aiModelInput.value,
+        autoOcr: document.getElementById('aiAutoOcrCheckbox').checked,
+        autoExplain: document.getElementById('aiAutoExplainCheckbox').checked
+      }, BUILT_IN_GEMINI_API_KEY);
+      if (settings.provider === 'custom' && settings.apiKey) settings.baseUrl = QuizAi.customBaseUrl(settings.baseUrl);
+      const saved = getAiSettings();
+      settings.vision = aiModelChoices.get(settings.model)?.vision ?? (sameAiConnection(settings, saved) ? saved.vision : null);
+      return settings;
+    }
+
+    aiProviderInput.addEventListener('change', () => {
+      const saved = getAiSettings();
+      const sameProvider = saved.provider === aiProviderInput.value;
+      aiKeyInput.value = sameProvider ? saved.userKey : '';
+      aiBaseUrlInput.value = sameProvider ? saved.baseUrl : '';
+      aiModelInput.value = sameProvider ? saved.model : (aiProviderInput.value === 'gemini' ? 'auto' : '');
+      resetAiModelForm();
     });
+    aiKeyInput.addEventListener('input', resetAiModelForm);
+    aiBaseUrlInput.addEventListener('input', () => {
+      const saved = getAiSettings();
+      if (saved.provider === 'custom' && aiBaseUrlInput.value.trim() !== saved.baseUrl && aiKeyInput.value === saved.userKey) {
+        aiKeyInput.value = '';
+      }
+      resetAiModelForm();
+    });
+    aiModelList.addEventListener('change', () => {
+      if (!aiModelList.value) return;
+      aiModelInput.value = aiModelList.value;
+      aiModelInput.dispatchEvent(new Event('input'));
+    });
+    aiModelInput.addEventListener('input', () => {
+      aiFormRevision++;
+      document.getElementById('aiTestResult').className = 'hidden';
+      const model = aiModelInput.value.trim();
+      aiModelList.value = aiModelChoices.has(model) || (aiProviderInput.value === 'gemini' && model === 'auto') ? model : '';
+    });
+
+    async function runAiSettingsAction(message, action) {
+      const revision = aiFormRevision;
+      aiLoadModelsBtn.disabled = true;
+      aiTestBtn.disabled = true;
+      showAiTestResult(true, '<i class="ph-bold ph-spinner animate-spin"></i> ' + message);
+      try {
+        const settings = readAiSettingsForm();
+        if (!settings.apiKey) throw new Error('Hãy nhập API key của nhà cung cấp đã chọn.');
+        const render = await action(settings);
+        if (revision === aiFormRevision) render();
+      } catch (err) {
+        if (revision === aiFormRevision) showAiTestResult(false, escapeHtml(err.message));
+      } finally {
+        aiLoadModelsBtn.disabled = false;
+        aiTestBtn.disabled = false;
+      }
+    }
+
+    aiLoadModelsBtn.addEventListener('click', () => runAiSettingsAction('Đang tải danh sách model…', async settings => {
+      let models;
+      if (settings.provider === 'gemini') {
+        const names = await listGeminiModels(settings.apiKey);
+        models = names.filter(id => modelScore(id, names) >= 0).map(id => ({ id, vision: true }));
+      } else {
+        models = await QuizAi.listModels(settings);
+      }
+      if (!models.length) throw new Error('Chưa tìm thấy model phù hợp. Bạn có thể nhập tên model thủ công.');
+      return () => {
+        fillAiModelChoices(models);
+        showAiTestResult(true, `Đã tải ${models.length} model. Chọn một model rồi lưu cài đặt.`);
+      };
+    }));
+
+    aiTestBtn.addEventListener('click', () => runAiSettingsAction('Đang kiểm tra model…', async settings => {
+      if (!settings.model) throw new Error('Hãy chọn hoặc nhập tên model.');
+      const payload = { contents: [{ role: 'user', parts: [{ text: 'Trả lời đúng một từ: OK' }] }], generationConfig: { maxOutputTokens: 256 } };
+      let model = settings.model;
+      if (settings.provider === 'gemini') {
+        const ranked = await getRankedModels(settings);
+        const candidates = ranked.slice(0, isAutoModel(model) ? 4 : 1);
+        for (const [index, candidate] of candidates.entries()) {
+          try {
+            await callGeminiModel(candidate, payload, settings, 2);
+            model = candidate;
+            break;
+          } catch (err) {
+            if (index === candidates.length - 1 || err.kind === 'fatal' || err.kind === 'network') throw err;
+          }
+        }
+      } else {
+        await QuizAi.generate(settings, payload);
+      }
+      return () => showAiTestResult(true, `Kết nối thành công với <code class="font-mono">${escapeHtml(model)}</code>. Bấm <strong>Lưu cài đặt</strong> để dùng.`);
+    }));
 
     document.getElementById('saveAiSettingsBtn').addEventListener('click', () => {
       const prev = getAiSettings();
-      const next = {
-        apiKey: document.getElementById('aiApiKeyInput').value.trim(),
-        model: document.getElementById('aiModelInput').value.trim() || DEFAULT_GEMINI_MODEL,
-        autoOcr: document.getElementById('aiAutoOcrCheckbox').checked,
-        autoExplain: document.getElementById('aiAutoExplainCheckbox').checked
-      };
-      saveAiSettings(next);
+      let next;
+      try {
+        next = readAiSettingsForm();
+        if (next.apiKey && !next.model) throw new Error('Hãy chọn hoặc nhập tên model.');
+      } catch (err) {
+        showAiTestResult(false, escapeHtml(err.message));
+        return;
+      }
+      if (!saveAiSettings(next)) return;
       closeAiSettingsModal();
       const now = getAiSettings();
       // Đổi key/model → bật lại AI và cho phép thử lại các câu bị lỗi trước đó
-      if (now.apiKey !== prev.apiKey || now.model !== prev.model || extraction.aiDisabledReason || extraction.aiPausedUntil) {
+      if (!sameAiConnection(now, prev) || now.vision !== prev.vision || extraction.aiDisabledReason || extraction.aiPausedUntil) {
+        aiConnectionVersion++;
         extraction.aiDisabledReason = '';
+        extraction.aiNoVision = false;
         extraction.failed.clear();
         extraction.forceOcr.clear();
         extraction.aiFails.clear();
@@ -5373,17 +5521,19 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         geminiState.blocked.clear();
         geminiState.verified.clear();
         geminiState.active = '';
-        if (now.apiKey !== prev.apiKey) geminiState.models = null;
-        updateAiModeLabel();
+        geminiState.probing = null;
+        geminiState.noThinkingConfig = false;
+        if (now.provider !== prev.provider || now.apiKey !== prev.apiKey) geminiState.models = null;
       }
-      showToast(now.apiKey ? 'Đã lưu: AI Gemini sẽ tự đọc ảnh cho cả bộ đề.' : 'Đã lưu: dùng OCR miễn phí để đọc ảnh.', 'ph-check-circle');
+      updateAiModeLabel();
+      showToast(now.apiKey ? 'Đã lưu model ' + now.model + '.' : 'Đã lưu: dùng OCR để đọc ảnh.', 'ph-check-circle');
       renderQuizQuestion();
     });
 
     // Dùng AI đọc lại các câu trước đó chỉ đọc được bằng OCR (chữ chính xác hơn)
     document.getElementById('aiUpgradeBtn').addEventListener('click', () => {
-      if (!getAiSettings().apiKey) {
-        showToast('Hãy nhập Gemini API key trước rồi bấm Lưu cài đặt.', 'ph-warning');
+      if (!aiCanReadImages()) {
+        showToast('Hãy lưu API key và model hỗ trợ ảnh trước.', 'ph-warning');
         return;
       }
       extraction.aiDisabledReason = '';
@@ -5960,7 +6110,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     }
 
     function shouldAttachImages(q) {
-      if (!Array.isArray(q.images) || q.images.length === 0) return false;
+      if (!aiCanReadImages() || !Array.isArray(q.images) || q.images.length === 0) return false;
       if (typeof state.chatAttachImg === 'boolean') return state.chatAttachImg;
       return !q.ocrDone || !!q.reconstructed || q.aiComplete === false;
     }
@@ -6010,13 +6160,20 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       return lines.join('\n');
     }
 
-    // Gọi Gemini lấy câu trả lời dạng chữ (dùng lại cơ chế tự chọn / đổi model sẵn có)
-    async function geminiText(system, contents, cfg = {}) {
-      const data = await geminiRequest({
+    async function aiText(system, contents, cfg = {}, settings = captureAiConnection()) {
+      const payload = {
         systemInstruction: { parts: [{ text: system }] },
         contents,
         generationConfig: { temperature: 0.4, maxOutputTokens: 8192, ...cfg }
-      });
+      };
+      let data;
+      try {
+        data = await requestAi(payload, settings);
+      } catch (err) {
+        if (err.kind !== 'vision') throw err;
+        const textOnly = contents.map(message => ({ ...message, parts: message.parts.filter(part => !part.inlineData) }));
+        data = await requestAi({ ...payload, contents: textOnly }, settings);
+      }
       const cand = data.candidates?.[0];
       let text = (cand?.content?.parts || [])
         .filter(p => typeof p.text === 'string' && !p.thought)
@@ -6070,9 +6227,10 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
 
     async function generateDetailedExplanation(q, force = false) {
       if (explainBusy.has(q.id)) return;
-      if (!aiAvailable()) {
+      const settings = captureAiConnection();
+      if (!aiAvailable(settings)) {
         if (force) {
-          showToast('Cần bật AI Gemini (dán API key) để viết giải thích chi tiết.', 'ph-warning');
+          showToast('Hãy cài đặt API AI để viết giải thích chi tiết.', 'ph-warning');
           openAiSettingsModal();
         }
         return;
@@ -6084,7 +6242,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         ensureCompleteOptions(q);
         const parts = [{ text: DETAIL_EXPLAIN_PROMPT }];
         if (shouldAttachImages(q)) (await getImageParts(q)).forEach(p => parts.push(p));
-        const text = await geminiText(chatSystemPrompt(q, false), [{ role: 'user', parts }], { temperature: 0.3 });
+        const text = await aiText(chatSystemPrompt(q, false), [{ role: 'user', parts }], { temperature: 0.3 }, settings);
         q.detailExplanation = text;
         q.detailFor = detailKey(q);
         syncQuestionCopies(q);
@@ -6182,6 +6340,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       const hasImg = Array.isArray(q.images) && q.images.length > 0;
       attachLabel.classList.toggle('hidden', !hasImg);
       attachBox.checked = shouldAttachImages(q);
+      attachBox.disabled = !aiCanReadImages();
     }
 
     async function sendChatMessage(textArg) {
@@ -6190,8 +6349,9 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       const input = document.getElementById('chatInput');
       const text = String(textArg ?? input.value).trim();
       if (!text || chatBusy.has(q.id)) return;
-      if (!aiAvailable()) {
-        showToast('Cần bật AI Gemini (dán API key) để chat với AI.', 'ph-warning');
+      const settings = captureAiConnection();
+      if (!aiAvailable(settings)) {
+        showToast('Hãy cài đặt API AI để chat.', 'ph-warning');
         openAiSettingsModal();
         return;
       }
@@ -6207,7 +6367,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
         while (history.length && history[0].role !== 'user') history.shift();
         const contents = history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] }));
         if (shouldAttachImages(q)) contents[contents.length - 1].parts.push(...(await getImageParts(q)));
-        const reply = await geminiText(chatSystemPrompt(q), contents);
+        const reply = await aiText(chatSystemPrompt(q), contents, {}, settings);
         q.chat.push({ role: 'ai', text: reply, at: Date.now() });
       } catch (err) {
         console.warn('Chat AI lỗi:', err);
