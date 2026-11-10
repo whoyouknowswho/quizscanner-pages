@@ -799,7 +799,7 @@
         </label>
         <label class="flex items-center gap-2 font-semibold text-slate-600 dark:text-slate-300 cursor-pointer">
           <input id="aiAutoExplainCheckbox" type="checkbox" class="w-4 h-4 accent-purple-500" checked>
-          Tự động viết giải thích chi tiết (từng bước) khi xem đáp án của một câu
+          Trả lời xong là AI tự viết lại giải thích chi tiết (từng bước), không cần bấm nút
         </label>
         <button type="button" id="aiUpgradeBtn" class="hidden w-full px-3 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-400 border border-purple-500/30 font-bold flex items-center justify-center gap-1.5 transition">
           <i class="ph-bold ph-sparkle"></i> Dùng AI đọc lại <span id="aiUpgradeCount">0</span> câu đang dùng OCR
@@ -6619,6 +6619,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     // =========================================================================
     const explainBusy = new Set();     // questionId đang được AI viết giải thích
     const explainFailed = new Map();   // questionId -> lỗi (chỉ trong phiên)
+    const explainRetryAt = new Map();  // questionId -> lúc được tự thử lại sau lỗi tạm thời
     const chatBusy = new Set();        // questionId đang chờ AI trả lời chat
     const chatErrors = new Map();      // questionId -> lỗi chat gần nhất
     const chatUi = { qid: null, count: -1, open: true };
@@ -6832,6 +6833,12 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       } catch (err) {
         console.warn('Không viết được giải thích chi tiết:', err);
         explainFailed.set(q.id, err?.message || 'lỗi không xác định');
+        // Quá tải / hết lượt / mất mạng: lần xem sau được tự thử lại; lỗi khác thì chờ bấm nút
+        if (['rate', 'overload', 'all', 'network', 'changed'].includes(err?.kind)) {
+          explainRetryAt.set(q.id, Number.isFinite(err.retryAt) ? err.retryAt : Date.now() + 60_000);
+        } else {
+          explainRetryAt.delete(q.id);
+        }
         if (err instanceof AiError && (err.kind === 'fatal' || err.kind === 'all')) handleAiError(err);
         else if (force) showToast('Không viết được giải thích: ' + (err?.message || 'lỗi'), 'ph-warning');
       } finally {
@@ -6840,11 +6847,12 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       }
     }
 
-    // Tự viết giải thích chi tiết khi giải thích hiện có còn ngắn (chỉ cho câu đang xem, có chờ 0,7s để không gọi khi lướt nhanh)
+    // Trả lời xong là AI tự viết lại giải thích chi tiết, thay cho giải thích lấy từ file
+    // (chỉ cho câu đang xem, chờ 0,7s để không gọi khi lướt nhanh; lỗi tạm thời thì tự thử lại khi được phép)
     function maybeAutoExplain(q) {
       if (!getAiSettings().autoExplain || !aiAvailable()) return;
-      if (hasDetailedExplanation(q) || explainBusy.has(q.id) || explainFailed.has(q.id) || extraction.inFlight.has(q.id)) return;
-      if (getExplanationText(q).length >= 450) return;
+      if (hasDetailedExplanation(q) || explainBusy.has(q.id) || extraction.inFlight.has(q.id)) return;
+      if (explainFailed.has(q.id) && Date.now() < (explainRetryAt.get(q.id) ?? Infinity)) return;
       if (autoExplainFor === q.id) return;
       autoExplainFor = q.id;
       setTimeout(() => {
