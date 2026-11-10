@@ -815,9 +815,11 @@
       <div id="cppRunnerSetup" class="space-y-2 text-xs text-slate-500 dark:text-slate-400">
         <p>Giải nén và mở <strong>Start-Cpp-Runner.cmd</strong> trên Windows. Nếu trình duyệt hỏi, cho phép QuizScanner kết nối với ứng dụng trên máy.</p>
         <div class="flex flex-wrap gap-4">
-          <a class="text-brand-600 dark:text-brand-300 underline" href="https://whoyouknowswho.github.io/quizscanner-pages/quiz-cpp-runner.zip" download>Tải C++ Runner</a>
+          <a class="text-brand-600 dark:text-brand-300 underline" href="https://whoyouknowswho.github.io/quizscanner-pages/quiz-cpp-runner.zip?v=2" download>Tải C++ Runner</a>
           <button id="connectCppRunnerBtn" type="button" class="font-bold text-brand-600 dark:text-brand-300 underline">Kết nối lại</button>
+          <button id="openCppWindowBtn" type="button" class="font-bold text-brand-600 dark:text-brand-300 underline">Mở cửa sổ chạy riêng</button>
         </div>
+        <p id="cppRunnerConnectionStatus" role="status"></p>
       </div>
       <iframe id="cppRunnerFrame" title="C++ Runner trên máy này" allow="loopback-network" referrerpolicy="no-referrer" class="w-full h-[75dvh] rounded-xl border border-slate-200 dark:border-slate-800"></iframe>
     </div>
@@ -6247,13 +6249,21 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     const cppDialog = document.getElementById('cppRunnerDialog');
     const cppRunnerFrame = document.getElementById('cppRunnerFrame');
     const cppRunnerSetup = document.getElementById('cppRunnerSetup');
+    const cppRunnerConnectionStatus = document.getElementById('cppRunnerConnectionStatus');
     const cppRunnerOrigin = 'http://127.0.0.1:43190';
     let cppDialogPrograms = [];
+    let cppRunnerWindow = null;
+    let cppPopupPrograms = [];
+
+    function cppRunnerPanelUrl() {
+      const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+      return cppRunnerOrigin + '/panel?theme=' + theme;
+    }
 
     function connectCppRunner() {
       cppRunnerSetup.classList.remove('hidden');
-      const theme = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
-      cppRunnerFrame.src = cppRunnerOrigin + '/panel?theme=' + theme;
+      cppRunnerConnectionStatus.textContent = '';
+      cppRunnerFrame.src = cppRunnerPanelUrl();
     }
 
     document.getElementById('openCppRunnerBtn').addEventListener('click', () => {
@@ -6264,14 +6274,25 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       connectCppRunner();
     });
     document.getElementById('connectCppRunnerBtn').addEventListener('click', connectCppRunner);
+    document.getElementById('openCppWindowBtn').addEventListener('click', () => {
+      cppPopupPrograms = cppDialogPrograms.slice();
+      const left = Math.max(0, screen.availWidth - 560);
+      cppRunnerWindow = window.open(cppRunnerPanelUrl(), 'quizscannerCppRunner', 'popup,width=540,height=720,left=' + left + ',top=20');
+      cppRunnerConnectionStatus.textContent = cppRunnerWindow
+        ? 'Đã mở cửa sổ chạy C++.'
+        : 'Trình duyệt đang chặn cửa sổ mới. Hãy cho phép mở cửa sổ từ QuizScanner.';
+    });
     cppDialog.addEventListener('close', () => { cppRunnerFrame.removeAttribute('src'); });
     cppRunnerFrame.addEventListener('load', () => {
       if (cppDialog.open) cppRunnerFrame.contentWindow.postMessage({ type: 'quiz-cpp-programs', programs: cppDialogPrograms }, cppRunnerOrigin);
     });
     window.addEventListener('message', event => {
-      if (!cppDialog.open || event.origin !== cppRunnerOrigin || event.source !== cppRunnerFrame.contentWindow
-        || event.data !== 'quiz-cpp-ready') return;
-      cppRunnerSetup.classList.add('hidden');
+      if (event.origin !== cppRunnerOrigin) return;
+      if (event.source === cppRunnerWindow && event.data === 'quiz-cpp-popup-ready') {
+        event.source.postMessage({ type: 'quiz-cpp-programs', programs: cppPopupPrograms }, cppRunnerOrigin);
+      } else if (cppDialog.open && event.source === cppRunnerFrame.contentWindow && event.data === 'quiz-cpp-ready') {
+        cppRunnerSetup.classList.add('hidden');
+      }
     });
 
     // Keyboard shortcuts A-J & 1-8 & Left/Right arrows
