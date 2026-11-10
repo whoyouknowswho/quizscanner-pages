@@ -21,10 +21,13 @@ function idbResult(request) {
 }
 
 async function writeQuizData(stores, write, { mark = true, duringPause = false } = {}) {
-  const db = await getDB();
   if (quizDataPaused && !duringPause) return false;
   const dirty = mark && Boolean(quizAccount);
-  const tx = db.transaction(dirty ? [...new Set([...stores, 'app_state'])] : stores, 'readwrite');
+  const tx = await openQuizTransaction(dirty ? [...new Set([...stores, 'app_state'])] : stores, 'readwrite');
+  if (quizDataPaused && !duringPause) {
+    tx.abort();
+    return false;
+  }
   const done = new Promise((resolve, reject) => {
     tx.oncomplete = resolve;
     tx.onabort = () => reject(tx.error || new Error('Giao dịch lưu dữ liệu đã bị hủy.'));
@@ -53,8 +56,7 @@ function readCloudMetadata(store) {
 }
 
 async function readQuizData() {
-  const db = await getDB();
-  const tx = db.transaction(['app_state', 'uploaded_files'], 'readonly');
+  const tx = await openQuizTransaction(['app_state', 'uploaded_files'], 'readonly');
   const app = tx.objectStore('app_state');
   const [main, light, files, [revision, pending]] = await Promise.all([
     idbResult(app.get('main_state')),
@@ -250,8 +252,8 @@ async function initializeQuizData() {
       if (!(await acquireQuizTab(quizAccount.id))) {
         throw new Error('Tài khoản này đang mở ở tab khác. Đóng tab đó rồi tải lại trang này.');
       }
-      const db = await getDB();
-      const [revision, pending] = await readCloudMetadata(db.transaction('app_state', 'readonly').objectStore('app_state'));
+      const tx = await openQuizTransaction('app_state', 'readonly');
+      const [revision, pending] = await readCloudMetadata(tx.objectStore('app_state'));
       if (pending) {
         cloudHasPending = true;
         quizDataStatus('Đang chờ gửi thay đổi đã lưu trên thiết bị.', 'Đang chờ đồng bộ');

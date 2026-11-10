@@ -1,4 +1,54 @@
 const QuizData = (() => {
+  function createQuizStore(factory, name) {
+    let connection;
+
+    function invalidate(opening) {
+      if (connection === opening) connection = null;
+    }
+
+    function open() {
+      if (connection) return connection;
+      const opening = new Promise((resolve, reject) => {
+        const request = factory.open(name);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          for (const store of ['app_state', 'uploaded_files']) {
+            if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: 'id' });
+          }
+        };
+        request.onsuccess = () => {
+          const db = request.result;
+          db.onclose = () => invalidate(opening);
+          db.onversionchange = () => {
+            invalidate(opening);
+            db.close();
+          };
+          resolve(db);
+        };
+        request.onerror = () => reject(request.error);
+      });
+      connection = opening;
+      opening.catch(() => invalidate(opening));
+      return opening;
+    }
+
+    async function transaction(stores, mode) {
+      const opening = open();
+      const db = await opening;
+      try {
+        return db.transaction(stores, mode);
+      } catch (error) {
+        if (error.name !== 'InvalidStateError') throw error;
+        // IndexedDB may already be closing before Chrome delivers its close event.
+        invalidate(opening);
+        db.close();
+        return (await open()).transaction(stores, mode);
+      }
+    }
+
+    return { transaction };
+  }
+
   const magic = new TextEncoder().encode('QUIZSCANNER-BACKUP\n');
   const mimeType = 'application/octet-stream';
   const invalidBackup = () => new Error('File sao lưu QuizScanner bị hỏng hoặc có định dạng không được hỗ trợ.');
@@ -139,7 +189,7 @@ const QuizData = (() => {
     };
   }
 
-  return { mimeType, createBackup, readBackup, inspectBackup, mergeBackups };
+  return { mimeType, createBackup, readBackup, inspectBackup, mergeBackups, createQuizStore };
 })();
 
 if (typeof module !== 'undefined') module.exports = QuizData;

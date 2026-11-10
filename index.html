@@ -770,7 +770,6 @@
     const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
     const LEGACY_STORAGE_KEY = 'QuizScannerPro_MultiSets_v2';
     const IDB_NAME = 'QuizScannerPro_IndexedDB_v3';
-    const IDB_VERSION = 1;
 
     const state = {
       sets: {},            // { [setId]: { id, name, createdAt, questions: [], allQuestionsBackup: null, userAnswers: {}, currentIndex: 0 } }
@@ -787,25 +786,13 @@
       inspectingSetId: null
     };
 
-    let dbPromise = null;
-    function getDB() {
-      if (!dbPromise) {
-        dbPromise = new Promise((resolve, reject) => {
-          const req = indexedDB.open(quizAccount ? IDB_NAME + '_' + quizAccount.id : IDB_NAME, IDB_VERSION);
-          req.onupgradeneeded = e => {
-            const db = e.target.result;
-            if (!db.objectStoreNames.contains('app_state')) {
-              db.createObjectStore('app_state', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('uploaded_files')) {
-              db.createObjectStore('uploaded_files', { keyPath: 'id' });
-            }
-          };
-          req.onsuccess = e => resolve(e.target.result);
-          req.onerror = e => reject(e.target.error);
-        });
+    let quizStore;
+    function openQuizTransaction(stores, mode) {
+      if (!quizStore) {
+        const name = quizAccount ? IDB_NAME + '_' + quizAccount.id : IDB_NAME;
+        quizStore = QuizData.createQuizStore(indexedDB, name);
       }
-      return dbPromise;
+      return quizStore.transaction(stores, mode);
     }
 
     function flashSaveBadge() {
@@ -6469,7 +6456,7 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
       else renderQuizQuestion();
     });
   </script>
-  <script src="quiz-data.js"></script>
-  <script src="quiz-sync.js"></script>
+  <script src="quiz-data.js?v=2"></script>
+  <script src="quiz-sync.js?v=2"></script>
 </body>
 </html>
