@@ -175,8 +175,34 @@ function reportQuizSaveError(error) {
   showToast('Không lưu được thay đổi. Hãy xuất bản sao lưu.', 'ph-warning');
 }
 
+const quizIsEmpty = snapshot => !Object.keys(snapshot?.sets || {}).length && !(snapshot?.uploadedFiles || []).length;
+
+function quizCounts(sets) {
+  const list = Object.values(sets || {}).filter(set => !set.randomExam);
+  const questions = list.reduce((sum, set) => sum + (set.questions?.length || 0), 0);
+  return `${list.length} bộ đề, ${questions} câu`;
+}
+
 function cloudIsCurrent() {
-  quizDataStatus('Đã đồng bộ dữ liệu với ' + cloudName() + '.', 'Đã lưu trên ' + cloudName());
+  const counts = typeof state !== 'undefined' && state.sets ? ': ' + quizCounts(state.sets) : '';
+  quizDataStatus('Đã đồng bộ với ' + cloudName() + counts + '.', 'Đã lưu trên ' + cloudName());
+}
+
+// Applies another device's copy, unless it is empty and this device has data:
+// then this device's data is sent instead, so an empty copy never wipes anything.
+async function applyRemoteQuiz(remote) {
+  const { snapshot: local } = await readQuizData();
+  if (quizIsEmpty(remote.snapshot) && !quizIsEmpty(local)) {
+    await writeQuizData(['app_state'], tx => {
+      const app = tx.objectStore('app_state');
+      app.put({ id: cloudRevisionKey, value: remote.revision });
+      app.put({ id: cloudPendingKey, value: crypto.randomUUID() });
+    }, { mark: false, duringPause: true });
+    cloudHasPending = true;
+    return false;
+  }
+  await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
+  return true;
 }
 
 function showCloudConflict() {
@@ -374,8 +400,9 @@ async function initializeQuizData() {
       } else {
         try {
           const remote = await fetchRemoteQuiz(revision?.value || '0');
-          if (remote?.snapshot) await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
-          if (remote && !remote.snapshot && (revision?.value || '0') !== '0') showCloudConflict();
+          if (remote?.snapshot && !(await applyRemoteQuiz(remote))) {
+            quizDataStatus('Bản trên ' + cloudName() + ' đang trống, đang gửi dữ liệu của thiết bị này lên.', 'Đang chờ đồng bộ');
+          } else if (remote && !remote.snapshot && (revision?.value || '0') !== '0') showCloudConflict();
           else cloudIsCurrent();
         } catch (error) {
           if (error.status === 401 && quizAccount.github) {
@@ -388,6 +415,9 @@ async function initializeQuizData() {
       }
     }
     await loadProgress();
+    if (quizAccount && !cloudHasPending && !cloudConflict && !cloudAuthExpired && dataEl('saveStatusBadge').textContent.startsWith('Đã lưu trên')) {
+      cloudIsCurrent();
+    }
     cloudLastCheck = Date.now();
     scheduleCloudUpload(0);
     return true;
@@ -545,6 +575,14 @@ dataEl('quizSyncNowBtn').addEventListener('click', async () => {
   button.disabled = true;
   try {
     await flushPendingSave();
+    const shown = quizAccount?.github && !cloudAuthExpired && !cloudConflict ? currentQuizSnapshot() : null;
+    if (shown && !quizIsEmpty(shown)) {
+      // Send exactly what this device shows; if another device sent something newer, it is merged.
+      await writeQuizSnapshot(shown, { pending: true });
+      cloudUploadBlocked = false;
+      await syncQuizToServer();
+      return;
+    }
     if (cloudAuthExpired || (!cloudHasPending && !cloudConflict)) reloadQuizData();
     else if (!cloudConflict) {
       cloudUploadBlocked = false;
@@ -624,8 +662,12 @@ document.addEventListener('visibilitychange', async () => {
     const remote = await fetchRemoteQuiz(revision);
     if (!remote?.snapshot || cloudHasPending || quizDataPaused) return;
     setQuizPaused(true);
-    await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
-    reloadQuizData();
+    if (await applyRemoteQuiz(remote)) {
+      reloadQuizData();
+    } else {
+      setQuizPaused(false);
+      scheduleCloudUpload(0);
+    }
   } catch {
     setQuizPaused(false);
   }
