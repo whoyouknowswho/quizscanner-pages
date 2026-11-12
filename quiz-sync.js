@@ -265,7 +265,8 @@ function gitHubCloud(config) {
   const client = QuizGitHub.createClient(config);
   return {
     name: 'GitHub',
-    delay: 15_000,
+    // GitHub allows only a few hundred new objects per hour, so batch changes.
+    delay: 60_000,
     async pull(knownRevision) {
       const local = await readQuizData().then(data => QuizGitHub.localPieces(data.snapshot)).catch(() => new Map());
       return client.pull(knownRevision, local);
@@ -336,6 +337,9 @@ async function syncQuizToServer() {
         } else {
           quizDataStatus('Phiên đăng nhập đã hết hạn. Đăng nhập lại để đồng bộ thay đổi đang lưu trên thiết bị.', 'Cần đăng nhập lại');
         }
+      } else if (error.status === 429) {
+        retryDelay = 120_000;
+        quizDataStatus(error.message + ' Thay đổi vẫn lưu trên thiết bị.', 'Chưa đồng bộ');
       } else if (error.status === 413 || error.status === 400) {
         cloudUploadBlocked = true;
         quizDataStatus(error.message + ' Bạn có thể xuất bản sao lưu.', 'Chưa đồng bộ');

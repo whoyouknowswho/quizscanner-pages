@@ -1,11 +1,13 @@
 // Syncs the quiz snapshot to a private GitHub repository through the Git Data API.
-// Images and uploaded files are stored once each under blobs/<sha256>, so a sync
-// only uploads what changed. A revision is the commit sha the data was read from;
+// Images and uploaded files are stored once each, bundled into packs/<sha256> and
+// located through the state's piece index, so a sync only uploads what changed. A revision is the commit sha the data was read from;
 // moving the branch is refused unless it still points there (optimistic locking).
 const QuizGitHub = (() => {
   const root = 'quizscanner/';
   const statePath = root + 'state.json';
   const blobDir = root + 'blobs/';
+  const packDir = root + 'packs/';
+  const packLimit = 12 * 1024 * 1024;
   const marker = 'quizscanner-blob:';
   const inlineLimit = 2048;
   const api = 'https://api.github.com';
@@ -111,8 +113,10 @@ const QuizGitHub = (() => {
       if (response.ok) return accept.includes('raw') ? new Uint8Array(await response.arrayBuffer()) : response.json();
       const detail = await response.json().catch(() => ({}));
       if (response.status === 401) throw failure(401, 'Token GitHub sai, đã hết hạn hoặc đã bị thu hồi.');
-      if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
-        throw failure(429, 'GitHub tạm giới hạn số lần gọi. Thử lại sau ít phút.');
+      const limited = response.headers.get('retry-after') || response.headers.get('x-ratelimit-remaining') === '0'
+        || /rate limit|abuse/i.test(detail.message || '');
+      if (response.status === 429 || (response.status === 403 && limited)) {
+        throw failure(429, 'GitHub đang giới hạn tốc độ gửi. Web sẽ tự thử lại sau ít phút.');
       }
       if (response.status === 403 || response.status === 404) {
         throw failure(401, 'Token không có quyền đọc và ghi repo ' + owner + '/' + repo + '.');
@@ -146,16 +150,32 @@ const QuizGitHub = (() => {
       return { owner, repo, branch };
     }
 
+    const readManifest = async files => files.has(statePath)
+      ? JSON.parse(new TextDecoder().decode(await blob(files.get(statePath))))
+      : null;
+    const holdsData = manifest => Boolean(manifest)
+      && (Object.keys(manifest.sets || {}).length > 0 || (manifest.uploadedFiles || []).length > 0);
+
     // null when unchanged; otherwise the newest revision and its snapshot (null if none yet).
     async function pull(knownRevision, local = new Map()) {
       const revision = await head();
       if (revision === knownRevision) return null;
       const files = await tree(revision);
-      const state = files.get(statePath);
-      if (!state) return { revision, snapshot: null };
-      const manifest = JSON.parse(new TextDecoder().decode(await blob(state)));
+      const manifest = await readManifest(files);
+      if (!manifest) return { revision, snapshot: null };
+      const packs = new Map();
+      const pack = name => {
+        if (!packs.has(name)) {
+          const sha = files.get(packDir + name);
+          if (!sha) throw failure(400, 'Dữ liệu trên GitHub thiếu một gói ảnh.');
+          packs.set(name, blob(sha));
+        }
+        return packs.get(name);
+      };
       const snapshot = await joinSnapshot(manifest, async hash => {
         if (local.has(hash)) return local.get(hash);
+        const spot = manifest.pieces?.[hash];
+        if (spot) return (await pack(spot[0])).subarray(spot[1], spot[1] + spot[2]);
         const sha = files.get(blobDir + hash);
         if (!sha) throw failure(400, 'Dữ liệu trên GitHub thiếu một ảnh hoặc file gốc.');
         return blob(sha);
@@ -163,36 +183,65 @@ const QuizGitHub = (() => {
       return { revision, snapshot };
     }
 
-    async function holdsData(sha) {
-      try {
-        const manifest = JSON.parse(new TextDecoder().decode(await blob(sha)));
-        return Object.keys(manifest.sets || {}).length > 0 || (manifest.uploadedFiles || []).length > 0;
-      } catch {
-        return true;
-      }
-    }
-
     // Returns the new revision, or throws status 412 when GitHub moved past `previous`.
     // A device that never synced ('0') may still replace a remote copy with no quiz data.
+    // New images and files are bundled into a few packs: GitHub limits how many objects
+    // can be created per minute and per hour, so one request per image would be refused.
     async function push(snapshot, previous) {
       const current = await head();
       const files = await tree(current);
-      const conflict = previous === '0'
-        ? files.has(statePath) && await holdsData(files.get(statePath))
-        : current !== previous;
-      if (conflict) throw failure(412, 'Dữ liệu trên GitHub đã thay đổi.');
+      const remote = await readManifest(files);
+      if (previous === '0' ? holdsData(remote) : current !== previous) throw failure(412, 'Dữ liệu trên GitHub đã thay đổi.');
       const { manifest, pieces } = await splitSnapshot(snapshot);
+      const known = remote?.pieces || {};
+      const index = {};
+      let group = [];
+      let size = 0;
+      const flush = async () => {
+        if (!group.length) return;
+        const bytes = new Uint8Array(size);
+        const spots = [];
+        let offset = 0;
+        for (const [hash, part] of group) {
+          bytes.set(part, offset);
+          spots.push([hash, offset, part.length]);
+          offset += part.length;
+        }
+        const name = await sha256(bytes);
+        if (!files.has(packDir + name)) {
+          const { sha } = await call('POST', '/git/blobs', { content: base64(bytes), encoding: 'base64' });
+          files.set(packDir + name, sha);
+        }
+        for (const [hash, at, length] of spots) index[hash] = [name, at, length];
+        group = [];
+        size = 0;
+      };
+      for (const [hash, value] of pieces) {
+        if (known[hash] && files.has(packDir + known[hash][0])) {
+          index[hash] = known[hash];
+          continue;
+        }
+        const part = toBytes(value);
+        if (size && size + part.length > packLimit) await flush();
+        group.push([hash, part]);
+        size += part.length;
+      }
+      await flush();
+      manifest.pieces = index;
       const entries = [];
       for (const [path, sha] of files) {
         if (!path.startsWith(root)) entries.push({ path, mode: '100644', type: 'blob', sha });
       }
-      for (const [hash, value] of pieces) {
-        const path = blobDir + hash;
-        let sha = files.get(path);
-        if (!sha) ({ sha } = await call('POST', '/git/blobs', { content: base64(toBytes(value)), encoding: 'base64' }));
-        entries.push({ path, mode: '100644', type: 'blob', sha });
+      for (const name of new Set(Object.values(index).map(spot => spot[0]))) {
+        entries.push({ path: packDir + name, mode: '100644', type: 'blob', sha: files.get(packDir + name) });
       }
-      entries.push({ path: statePath, mode: '100644', type: 'blob', content: JSON.stringify(manifest) });
+      const state = JSON.stringify(manifest);
+      if (state.length < 512 * 1024) {
+        entries.push({ path: statePath, mode: '100644', type: 'blob', content: state });
+      } else {
+        const { sha } = await call('POST', '/git/blobs', { content: base64(new TextEncoder().encode(state)), encoding: 'base64' });
+        entries.push({ path: statePath, mode: '100644', type: 'blob', sha });
+      }
       const { sha: treeSha } = await call('POST', '/git/trees', { tree: entries });
       const { sha: commit } = await call('POST', '/git/commits', { message: 'Đồng bộ QuizScanner', tree: treeSha, parents: [current] });
       try {
@@ -207,7 +256,7 @@ const QuizGitHub = (() => {
     return { connect, pull, push };
   }
 
-  return { parseRepo, splitSnapshot, joinSnapshot, localPieces, createClient, statePath, blobDir };
+  return { parseRepo, splitSnapshot, joinSnapshot, localPieces, createClient, statePath, blobDir, packDir };
 })();
 
 if (typeof module !== 'undefined') module.exports = QuizGitHub;
