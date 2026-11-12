@@ -10,10 +10,14 @@ let cloudTimer;
 let cloudFlight;
 let quizReloading = false;
 let quizLastSavedAt = 0;
+let quizCloud = null;
+let cloudLastCheck = 0;
 const quizProgressJournalKey = 'QuizScannerPro_Progress_v1';
+const quizGitHubKey = 'QuizScannerPro_GitHubSync_v1';
 const cloudRevisionKey = 'cloud_revision';
 const cloudPendingKey = 'cloud_pending';
 const dataEl = id => document.getElementById(id);
+const cloudName = () => quizCloud?.name || 'máy chủ';
 
 function idbResult(request) {
   return new Promise((resolve, reject) => {
@@ -172,12 +176,12 @@ function reportQuizSaveError(error) {
 }
 
 function cloudIsCurrent() {
-  quizDataStatus('Đã đồng bộ dữ liệu với máy chủ.', 'Đã lưu trên máy chủ');
+  quizDataStatus('Đã đồng bộ dữ liệu với ' + cloudName() + '.', 'Đã lưu trên ' + cloudName());
 }
 
 function showCloudConflict() {
   cloudConflict = true;
-  quizDataStatus('Dữ liệu trên máy chủ đã thay đổi. Bấm “Gộp với dữ liệu máy chủ” để giữ cả hai bản.', 'Cần gộp dữ liệu');
+  quizDataStatus(`Dữ liệu trên ${cloudName()} đã thay đổi từ thiết bị khác. Bấm “Gộp với dữ liệu ${cloudName()}” để giữ cả hai bản.`, 'Cần gộp dữ liệu');
 }
 
 function quizAccountHeaders(headers = {}) {
@@ -189,19 +193,66 @@ async function quizApiError(response) {
   return Object.assign(new Error(body.error || 'Không kết nối được với máy chủ.'), { status: response.status });
 }
 
-async function fetchRemoteQuiz(knownRevision) {
-  const headers = quizAccountHeaders();
-  if (knownRevision !== undefined) headers['If-None-Match'] = '"' + knownRevision + '"';
-  const response = await fetch('/api/backup', { headers, signal: AbortSignal.timeout(90_000) });
-  if (response.status === 304) return null;
-  if (!response.ok) throw await quizApiError(response);
-  const revision = response.headers.get('etag')?.slice(1, -1);
-  if (!revision) throw new Error('Máy chủ không trả về phiên bản dữ liệu.');
-  const snapshot = response.status === 204 ? null : await QuizData.readBackup(await response.blob());
-  return { revision, snapshot };
+// Each cloud has pull(knownRevision) -> null | { revision, snapshot } and
+// push(snapshot, revision, pending) -> new revision, throwing status 412 on a conflict.
+const serverCloud = {
+  name: 'máy chủ',
+  delay: 5000,
+  async pull(knownRevision) {
+    const headers = quizAccountHeaders();
+    if (knownRevision !== undefined) headers['If-None-Match'] = '"' + knownRevision + '"';
+    const response = await fetch('/api/backup', { headers, signal: AbortSignal.timeout(90_000) });
+    if (response.status === 304) return null;
+    if (!response.ok) throw await quizApiError(response);
+    const revision = response.headers.get('etag')?.slice(1, -1);
+    if (!revision) throw new Error('Máy chủ không trả về phiên bản dữ liệu.');
+    const snapshot = response.status === 204 ? null : await QuizData.readBackup(await response.blob());
+    return { revision, snapshot };
+  },
+  async push(snapshot, revision, pending) {
+    let archive;
+    try { archive = QuizData.createBackup(snapshot); }
+    catch (error) { throw Object.assign(error, { status: 400 }); }
+    const response = await fetch('/api/backup', {
+      method: 'PUT',
+      headers: quizAccountHeaders({ 'If-Match': '"' + revision + '"', 'X-Quiz-Revision': pending }),
+      body: archive,
+      signal: AbortSignal.timeout(90_000)
+    });
+    if (response.status === 412) throw Object.assign(new Error('Dữ liệu trên máy chủ đã thay đổi.'), { status: 412 });
+    if (response.status !== 204 || response.headers.get('etag') !== '"' + pending + '"') throw await quizApiError(response);
+    return pending;
+  }
+};
+
+function readGitHubConfig() {
+  try {
+    const config = JSON.parse(localStorage.getItem(quizGitHubKey) || 'null');
+    return config?.owner && config.repo && config.token ? config : null;
+  } catch {
+    return null;
+  }
 }
 
-function scheduleCloudUpload(delay = 5000) {
+function gitHubCloud(config) {
+  const client = QuizGitHub.createClient(config);
+  return {
+    name: 'GitHub',
+    delay: 15_000,
+    async pull(knownRevision) {
+      const local = await readQuizData().then(data => QuizGitHub.localPieces(data.snapshot)).catch(() => new Map());
+      return client.pull(knownRevision, local);
+    },
+    push: (snapshot, revision) => client.push(snapshot, revision)
+  };
+}
+
+function fetchRemoteQuiz(knownRevision) {
+  cloudLastCheck = Date.now();
+  return quizCloud.pull(knownRevision);
+}
+
+function scheduleCloudUpload(delay = quizCloud?.delay ?? 5000) {
   if (!quizAccount || !cloudHasPending || cloudConflict || cloudAuthExpired || cloudUploadBlocked || cloudTimer) return;
   cloudTimer = setTimeout(() => {
     cloudTimer = null;
@@ -219,25 +270,20 @@ async function syncQuizToServer() {
     try {
       const { revision, pending, snapshot } = await readQuizData();
       if (!pending) return;
-      quizDataStatus('Đang gửi dữ liệu lên máy chủ…', 'Đang đồng bộ');
-      let archive;
-      try { archive = QuizData.createBackup(snapshot); }
-      catch (error) { throw Object.assign(error, { status: 400 }); }
-      const response = await fetch('/api/backup', {
-        method: 'PUT',
-        headers: quizAccountHeaders({ 'If-Match': '"' + revision + '"', 'X-Quiz-Revision': pending }),
-        body: archive,
-        signal: AbortSignal.timeout(90_000)
-      });
-      if (response.status === 412) {
+      quizDataStatus('Đang gửi dữ liệu lên ' + cloudName() + '…', 'Đang đồng bộ');
+      let next;
+      try {
+        next = await quizCloud.push(snapshot, revision, pending);
+      } catch (error) {
+        if (error.status !== 412) throw error;
         showCloudConflict();
         return;
       }
-      if (response.status !== 204 || response.headers.get('etag') !== '"' + pending + '"') throw await quizApiError(response);
+      cloudLastCheck = Date.now();
       let remaining = false;
       await writeQuizData(['app_state'], tx => {
         const app = tx.objectStore('app_state');
-        app.put({ id: cloudRevisionKey, value: pending });
+        app.put({ id: cloudRevisionKey, value: next });
         const marker = app.get(cloudPendingKey);
         marker.onsuccess = () => {
           remaining = marker.result?.value !== pending && Boolean(marker.result?.value);
@@ -250,7 +296,11 @@ async function syncQuizToServer() {
       retryDelay = 15_000;
       if (error.status === 401) {
         cloudAuthExpired = true;
-        quizDataStatus('Phiên đăng nhập đã hết hạn. Đăng nhập lại để đồng bộ thay đổi đang lưu trên thiết bị.', 'Cần đăng nhập lại');
+        if (quizAccount.github) {
+          quizDataStatus(error.message + ' Bấm “Ngắt kết nối” rồi kết nối lại bằng token mới. Thay đổi vẫn lưu trên thiết bị.', 'Cần token mới');
+        } else {
+          quizDataStatus('Phiên đăng nhập đã hết hạn. Đăng nhập lại để đồng bộ thay đổi đang lưu trên thiết bị.', 'Cần đăng nhập lại');
+        }
       } else if (error.status === 413 || error.status === 400) {
         cloudUploadBlocked = true;
         quizDataStatus(error.message + ' Bạn có thể xuất bản sao lưu.', 'Chưa đồng bộ');
@@ -283,8 +333,19 @@ async function initializeQuizData() {
   try {
     const managed = Boolean(document.querySelector('meta[name="quiz-account-server"]'));
     if (!managed) {
-      quizDataStatus('Bộ đề và tiến trình tự mở lại khi tải lại trang trong trình duyệt này.', 'Lưu trên thiết bị');
+      const config = readGitHubConfig();
+      dataEl('quizGitHubForm').classList.toggle('hidden', Boolean(config));
+      dataEl('quizAccountActions').classList.toggle('hidden', !config);
+      if (config) {
+        quizAccount = { id: 'github', username: config.owner + '/' + config.repo, github: true };
+        quizCloud = gitHubCloud(config);
+        dataEl('quizLogoutBtn').textContent = 'Ngắt kết nối';
+        dataEl('quizMergeBtn').textContent = 'Gộp với dữ liệu GitHub';
+      } else {
+        quizDataStatus('Bộ đề và tiến trình chỉ lưu trong trình duyệt này. Kết nối GitHub để dùng chung trên điện thoại và máy tính.', 'Lưu trên thiết bị');
+      }
     } else {
+      quizCloud = serverCloud;
       const response = await fetch('/api/account', { signal: AbortSignal.timeout(12_000) });
       if (!response.ok) throw await quizApiError(response);
       ({ account: quizAccount } = await response.json());
@@ -307,12 +368,18 @@ async function initializeQuizData() {
           if (remote?.snapshot) await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
           if (remote && !remote.snapshot && revision?.value !== '0') showCloudConflict();
           else cloudIsCurrent();
-        } catch {
-          quizDataStatus('Chưa tải được dữ liệu máy chủ. Đang mở bản lưu trên thiết bị.', 'Chưa đồng bộ');
+        } catch (error) {
+          if (error.status === 401 && quizAccount.github) {
+            cloudAuthExpired = true;
+            quizDataStatus(error.message + ' Bấm “Ngắt kết nối” rồi kết nối lại bằng token mới.', 'Cần token mới');
+          } else {
+            quizDataStatus('Chưa tải được dữ liệu ' + cloudName() + '. Đang mở bản lưu trên thiết bị.', 'Chưa đồng bộ');
+          }
         }
       }
     }
     await loadProgress();
+    cloudLastCheck = Date.now();
     scheduleCloudUpload(0);
     return true;
   } catch (error) {
@@ -388,6 +455,45 @@ dataEl('quizAuthForm').addEventListener('submit', async event => {
   }
 });
 
+dataEl('quizGitHubForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const errorLine = dataEl('quizGitHubError');
+  const button = dataEl('quizGitHubConnectBtn');
+  errorLine.textContent = '';
+  if (dataEl('startScanBtn').disabled) {
+    errorLine.textContent = 'Hãy đợi quét file xong rồi kết nối.';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Đang kiểm tra…';
+  try {
+    const { owner, repo } = QuizGitHub.parseRepo(dataEl('quizGitHubRepo').value);
+    const token = dataEl('quizGitHubToken').value.trim();
+    if (!token) throw new Error('Hãy dán token GitHub.');
+    const { branch } = await QuizGitHub.createClient({ owner, repo, token }).connect();
+    await flushPendingSave();
+    await saveProgress();
+    const { snapshot } = await readQuizData();
+    const hasData = Object.keys(snapshot.sets).length > 0 || snapshot.uploadedFiles.length > 0;
+    setQuizPaused(true);
+    // Data already on this device is sent up; if GitHub has data too, the user is asked to merge.
+    await writeQuizData(['app_state'], tx => {
+      const app = tx.objectStore('app_state');
+      app.delete(cloudRevisionKey);
+      if (hasData) app.put({ id: cloudPendingKey, value: crypto.randomUUID() });
+      else app.delete(cloudPendingKey);
+    }, { mark: false, duringPause: true });
+    localStorage.setItem(quizGitHubKey, JSON.stringify({ owner, repo, branch, token }));
+    reloadQuizData();
+  } catch (error) {
+    setQuizPaused(false);
+    errorLine.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Kết nối GitHub';
+  }
+});
+
 dataEl('quizLogoutBtn').addEventListener('click', async () => {
   if (dataEl('startScanBtn').disabled) {
     showToast('Hãy đợi quét file xong rồi đăng xuất.', 'ph-warning');
@@ -398,6 +504,18 @@ dataEl('quizLogoutBtn').addEventListener('click', async () => {
   try {
     await flushPendingSave();
     await syncQuizToServer();
+    if (quizAccount.github) {
+      if (cloudHasPending && !confirm('Còn thay đổi chưa lên GitHub. Dữ liệu vẫn ở lại trên thiết bị này. Vẫn ngắt kết nối?')) return;
+      setQuizPaused(true);
+      await writeQuizData(['app_state'], tx => {
+        const app = tx.objectStore('app_state');
+        app.delete(cloudRevisionKey);
+        app.delete(cloudPendingKey);
+      }, { mark: false, duringPause: true });
+      localStorage.removeItem(quizGitHubKey);
+      reloadQuizData();
+      return;
+    }
     if (cloudHasPending && !confirm('Còn thay đổi chưa lên máy chủ. Bạn có thể đăng nhập lại trên thiết bị này để gửi tiếp. Vẫn đăng xuất?')) return;
     setQuizPaused(true);
     const response = await fetch('/api/account/logout', {
@@ -480,6 +598,29 @@ backupInput.addEventListener('change', async () => {
 });
 
 window.addEventListener('online', () => scheduleCloudUpload(0));
+
+// Phones rarely close tabs: send changes when the page is hidden, and look for
+// another device's changes when it comes back.
+document.addEventListener('visibilitychange', async () => {
+  if (!quizAccount || !quizCloud || quizDataPaused || quizReloading) return;
+  if (document.visibilityState === 'hidden') {
+    if (saveTimer) await flushPendingSave();
+    if (cloudHasPending) syncQuizToServer();
+    return;
+  }
+  if (cloudHasPending || cloudConflict || cloudAuthExpired || cloudFlight || Date.now() - cloudLastCheck < 30_000) return;
+  try {
+    const { revision, pending } = await readQuizData();
+    if (pending) return;
+    const remote = await fetchRemoteQuiz(revision);
+    if (!remote?.snapshot || cloudHasPending || quizDataPaused) return;
+    setQuizPaused(true);
+    await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
+    reloadQuizData();
+  } catch {
+    setQuizPaused(false);
+  }
+});
 window.addEventListener('beforeunload', event => {
   const cloudUnsaved = quizAccount && (cloudHasPending || saveTimer);
   if (!quizReloading && (quizFullSavesPending || quizFullSaveFailed || cloudUnsaved)) {

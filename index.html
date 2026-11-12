@@ -2,7 +2,8 @@
 <html lang="vi" class="h-full dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1523">
   <title>QuizScanner Pro — Quản Lý Bộ Câu Hỏi & Lưu Trữ File</title>
   <script src="quiz-lock-config.js?v=1"></script>
   <script src="quiz-lock.js?v=2"></script>
@@ -94,6 +95,38 @@
     }
     #cppRunnerDialog::backdrop { background: rgba(3, 7, 18, 0.28); }
     #cppRunnerDialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+    /* Điện thoại */
+    html { -webkit-text-size-adjust: 100%; }
+    @media (max-width: 639px) {
+      /* iPhone tự phóng to khi chạm vào ô có chữ nhỏ hơn 16px. */
+      input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
+      #quizHeader > div { padding-top: 0.5rem; padding-bottom: 0.5rem; row-gap: 0.5rem; }
+      #mainNav button { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 2px; padding: 0.35rem 0.25rem; font-size: 11px; line-height: 1.15; text-align: center; }
+      #mainNav button > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      #mainNav button > i { font-size: 1.15rem; }
+      #toastBanner { left: 0.75rem; right: 0.75rem; bottom: calc(5.25rem + env(safe-area-inset-bottom)); max-width: none; }
+    }
+    @media (max-width: 1023px) {
+      /* Nút chuyển câu luôn ở cạnh dưới màn hình khi đang làm bài. */
+      #quizSection { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }
+      #quizNavRow {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; margin: 0;
+        padding: 0.6rem max(0.75rem, env(safe-area-inset-right)) calc(0.6rem + env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+        background: rgba(255, 255, 255, 0.94); border-top: 1px solid #e2e8f0;
+        -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      }
+      .dark #quizNavRow { background: rgba(15, 21, 35, 0.94); border-top-color: #1e293b; }
+      #quizNavRow button { min-height: 2.9rem; font-size: 0.9rem; }
+      #quizNavRow + * { border-top: 0; padding-top: 0; }
+      body.quiz-typing #quizNavRow { display: none; }
+    }
+    @media (pointer: coarse), (max-width: 639px) {
+      /* Nút đủ lớn để bấm bằng ngón tay. */
+      #quizMain button:not(.underline):not([role=switch]), #quizMain select, #editModal button, #aiSettingsModal button:not(.underline) { min-height: 2.5rem; }
+      #quizMain button.p-1\.5, #quizMain button.p-1, #toastBanner button { min-width: 2.5rem; min-height: 2.5rem; }
+      #quizMain input[type=checkbox] { width: 1.25rem; height: 1.25rem; }
+    }
   </style>
 </head>
 <body class="min-h-full bg-slate-50 dark:bg-[#0b0f19] text-slate-900 dark:text-slate-100 flex flex-col transition-colors duration-200">
@@ -120,7 +153,7 @@
       </div>
 
       <!-- Navigation Tabs -->
-      <div class="order-last sm:order-none w-full sm:w-auto flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200/70 dark:border-slate-800">
+      <div id="mainNav" class="order-last sm:order-none w-full sm:w-auto flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200/70 dark:border-slate-800">
         <button id="navQuizBtn" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-1.5 bg-white dark:bg-slate-800 text-brand-600 dark:text-brand-400 shadow-sm transition">
           <i class="ph-bold ph-play-circle"></i> <span>Làm Bài</span>
         </button>
@@ -128,10 +161,10 @@
           <i class="ph-bold ph-shuffle"></i> <span>Tạo đề</span>
         </button>
         <button id="navGalleryBtn" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 transition">
-          <i class="ph-bold ph-folders"></i> <span class="hidden md:inline">Các Bộ Câu Hỏi</span> (<span id="navGalleryCount">0</span>)
+          <i class="ph-bold ph-folders"></i> <span><span class="sm:hidden">Bộ đề</span><span class="hidden md:inline">Các Bộ Câu Hỏi</span> (<span id="navGalleryCount">0</span>)</span>
         </button>
         <button id="navUploadBtn" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 transition">
-          <i class="ph-bold ph-upload-simple"></i> <span>Quét File</span> (<span id="navUploadedFilesCount">0</span>)
+          <i class="ph-bold ph-upload-simple"></i> <span>Quét File (<span id="navUploadedFilesCount">0</span>)</span>
         </button>
       </div>
 
@@ -375,7 +408,7 @@
 
           <!-- Navigation & Palette -->
           <div class="bg-white dark:bg-[#131b2e] border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-sm space-y-3">
-            <div class="flex items-center justify-between gap-2">
+            <div id="quizNavRow" class="flex items-center justify-between gap-2">
               <button id="prevQBtn" class="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 disabled:opacity-40 transition">
                 <i class="ph-bold ph-arrow-left"></i> Câu trước
               </button>
@@ -464,6 +497,29 @@
             <button type="submit" value="register" class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold">Tạo tài khoản</button>
           </div>
           <p id="quizAuthError" class="text-xs text-rose-600 dark:text-rose-300" role="alert"></p>
+        </form>
+        <form id="quizGitHubForm" class="hidden space-y-3">
+          <p class="text-xs text-slate-500 dark:text-slate-400">Kết nối một repo GitHub riêng tư để dùng chung bộ đề và tiến trình giữa điện thoại và máy tính. Mỗi thiết bị chỉ cần kết nối một lần. Token chỉ lưu trên thiết bị này.</p>
+          <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+            <label class="grid gap-1 text-xs font-bold min-w-0">Repo dữ liệu
+              <input id="quizGitHubRepo" required value="whoyouknowswho/quizscanner-data" autocomplete="off" autocapitalize="none" spellcheck="false" class="w-full min-w-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-3 py-2.5 text-base sm:text-sm font-normal">
+            </label>
+            <label class="grid gap-1 text-xs font-bold min-w-0">Token GitHub
+              <input id="quizGitHubToken" type="password" required autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="github_pat_…" class="w-full min-w-0 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-3 py-2.5 text-base sm:text-sm font-normal">
+            </label>
+            <button id="quizGitHubConnectBtn" type="submit" class="px-4 py-2.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-bold">Kết nối GitHub</button>
+          </div>
+          <p id="quizGitHubError" class="text-xs text-rose-600 dark:text-rose-300" role="alert"></p>
+          <details class="text-xs text-slate-600 dark:text-slate-300">
+            <summary class="cursor-pointer font-bold text-brand-600 dark:text-brand-400">Cách tạo token</summary>
+            <ol class="list-decimal pl-5 mt-2 space-y-1">
+              <li>Mở <a class="underline font-semibold" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">trang tạo token của GitHub</a> và đăng nhập.</li>
+              <li>Đặt tên bất kỳ, chọn thời hạn tùy ý (hết hạn thì tạo token mới).</li>
+              <li>Ở <b>Repository access</b>, chọn <b>Only select repositories</b> rồi chọn repo dữ liệu.</li>
+              <li>Ở <b>Permissions → Repository permissions</b>, đặt <b>Contents</b> là <b>Read and write</b>.</li>
+              <li>Bấm <b>Generate token</b>, sao chép token rồi dán vào ô trên. Có thể dùng cùng token cho điện thoại và máy tính.</li>
+            </ol>
+          </details>
         </form>
         <div id="quizAccountActions" class="hidden flex flex-wrap gap-2">
           <button id="quizSyncNowBtn" type="button" class="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold">Đồng bộ ngay</button>
@@ -874,7 +930,8 @@
     let quizStore;
     function openQuizTransaction(stores, mode) {
       if (!quizStore) {
-        const name = quizAccount ? IDB_NAME + '_' + quizAccount.id : IDB_NAME;
+        // GitHub sync keeps this device's own data; server accounts get a separate database.
+        const name = quizAccount && !quizAccount.github ? IDB_NAME + '_' + quizAccount.id : IDB_NAME;
         quizStore = QuizData.createQuizStore(indexedDB, name);
       }
       return quizStore.transaction(stores, mode);
@@ -7137,6 +7194,15 @@ Trả về JSON {"groups":[[1,2],[3]]} (số thứ tự ảnh bắt đầu từ 
     });
   </script>
   <script src="quiz-data.js?v=5"></script>
-  <script src="quiz-sync.js?v=4"></script>
+  <script>
+    // Hide the bottom question bar while the phone keyboard is open.
+    (() => {
+      const typing = el => Boolean(el?.matches?.('textarea, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])'));
+      document.addEventListener('focusin', event => document.body.classList.toggle('quiz-typing', typing(event.target)));
+      document.addEventListener('focusout', event => { if (!typing(event.relatedTarget)) document.body.classList.remove('quiz-typing'); });
+    })();
+  </script>
+  <script src="quiz-github.js?v=1"></script>
+  <script src="quiz-sync.js?v=5"></script>
 </body>
 </html>
