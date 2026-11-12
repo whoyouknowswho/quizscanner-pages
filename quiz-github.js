@@ -163,11 +163,24 @@ const QuizGitHub = (() => {
       return { revision, snapshot };
     }
 
+    async function holdsData(sha) {
+      try {
+        const manifest = JSON.parse(new TextDecoder().decode(await blob(sha)));
+        return Object.keys(manifest.sets || {}).length > 0 || (manifest.uploadedFiles || []).length > 0;
+      } catch {
+        return true;
+      }
+    }
+
     // Returns the new revision, or throws status 412 when GitHub moved past `previous`.
+    // A device that never synced ('0') may still replace a remote copy with no quiz data.
     async function push(snapshot, previous) {
       const current = await head();
       const files = await tree(current);
-      if (previous === '0' ? files.has(statePath) : current !== previous) throw failure(412, 'Dữ liệu trên GitHub đã thay đổi.');
+      const conflict = previous === '0'
+        ? files.has(statePath) && await holdsData(files.get(statePath))
+        : current !== previous;
+      if (conflict) throw failure(412, 'Dữ liệu trên GitHub đã thay đổi.');
       const { manifest, pieces } = await splitSnapshot(snapshot);
       const entries = [];
       for (const [path, sha] of files) {

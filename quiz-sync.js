@@ -180,6 +180,7 @@ function cloudIsCurrent() {
 }
 
 function showCloudConflict() {
+  if (!cloudConflict) showToast(`Thiết bị khác vừa đổi dữ liệu. Vào mục Dữ liệu, bấm “Gộp với dữ liệu ${cloudName()}”.`, 'ph-warning');
   cloudConflict = true;
   quizDataStatus(`Dữ liệu trên ${cloudName()} đã thay đổi từ thiết bị khác. Bấm “Gộp với dữ liệu ${cloudName()}” để giữ cả hai bản.`, 'Cần gộp dữ liệu');
 }
@@ -276,6 +277,14 @@ async function syncQuizToServer() {
         next = await quizCloud.push(snapshot, revision, pending);
       } catch (error) {
         if (error.status !== 412) throw error;
+        const empty = !Object.keys(snapshot.sets).length && !snapshot.uploadedFiles.length;
+        if (quizAccount.github && (revision === '0' || empty)) {
+          // First connection or a device with nothing yet: merging keeps everything, so do it now.
+          quizDataStatus('Đang gộp với dữ liệu GitHub…', 'Đang đồng bộ');
+          const remote = await fetchRemoteQuiz();
+          await restoreQuizData(remote.snapshot, remote.revision);
+          return;
+        }
         showCloudConflict();
         return;
       }
@@ -366,7 +375,7 @@ async function initializeQuizData() {
         try {
           const remote = await fetchRemoteQuiz(revision?.value || '0');
           if (remote?.snapshot) await writeQuizSnapshot(remote.snapshot, { revision: remote.revision, pending: false });
-          if (remote && !remote.snapshot && revision?.value !== '0') showCloudConflict();
+          if (remote && !remote.snapshot && (revision?.value || '0') !== '0') showCloudConflict();
           else cloudIsCurrent();
         } catch (error) {
           if (error.status === 401 && quizAccount.github) {
