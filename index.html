@@ -510,16 +510,15 @@
             <button id="quizGitHubConnectBtn" type="submit" class="px-4 py-2.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-sm font-bold">Kết nối GitHub</button>
           </div>
           <p id="quizGitHubError" class="text-xs text-rose-600 dark:text-rose-300" role="alert"></p>
-          <details class="text-xs text-slate-600 dark:text-slate-300">
-            <summary class="cursor-pointer font-bold text-brand-600 dark:text-brand-400">Cách tạo token</summary>
-            <ol class="list-decimal pl-5 mt-2 space-y-1">
-              <li>Mở <a class="underline font-semibold" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">trang tạo token của GitHub</a> và đăng nhập.</li>
-              <li>Đặt tên bất kỳ, chọn thời hạn tùy ý (hết hạn thì tạo token mới).</li>
-              <li>Ở <b>Repository access</b>, chọn <b>Only select repositories</b> rồi chọn repo dữ liệu.</li>
-              <li>Ở <b>Permissions → Repository permissions</b>, đặt <b>Contents</b> là <b>Read and write</b>.</li>
-              <li>Bấm <b>Generate token</b>, sao chép token rồi dán vào ô trên. Có thể dùng cùng token cho điện thoại và máy tính.</li>
+          <div class="rounded-xl border border-brand-500/30 bg-brand-500/5 p-3 space-y-2 text-xs text-slate-600 dark:text-slate-300">
+            <p class="font-bold text-slate-800 dark:text-slate-100">Chưa có token? Làm 3 bước:</p>
+            <ol class="list-decimal pl-5 space-y-1">
+              <li>Bấm nút dưới đây. GitHub mở form đã điền sẵn tên, thời hạn 1 năm và quyền <b>Contents: Read and write</b>.</li>
+              <li>Ở <b>Repository access</b>, chọn <b>Only select repositories</b> rồi chọn repo dữ liệu (ví dụ <b>quizscanner-data</b>).</li>
+              <li>Kéo xuống cuối, bấm <b>Generate token</b>, sao chép token rồi dán vào ô <b>Token GitHub</b> ở trên. Điện thoại và máy tính dùng chung một token được.</li>
             </ol>
-          </details>
+            <a id="quizGitHubTokenLink" class="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-brand-500/40 font-bold text-brand-700 dark:text-brand-300" href="https://github.com/settings/personal-access-tokens/new?name=QuizScanner+dong+bo&amp;description=Dong+bo+du+lieu+QuizScanner+giua+cac+thiet+bi&amp;expires_in=366&amp;contents=write" target="_blank" rel="noopener noreferrer"><i class="ph-bold ph-key"></i> Mở trang tạo token trên GitHub</a>
+          </div>
         </form>
         <div id="quizAccountActions" class="hidden flex flex-wrap gap-2">
           <button id="quizSyncNowBtn" type="button" class="px-3 py-2 rounded-lg bg-brand-600 hover:bg-brand-500 text-white text-xs font-bold">Đồng bộ ngay</button>
